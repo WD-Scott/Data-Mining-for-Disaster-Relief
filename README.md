@@ -3,7 +3,9 @@
 ## Metadata:
 Disaster Relief Project for the University of Virginia's DS6021 course.
 
-Included are the final PDF file of the report as well as the R code in an RMD file.
+Included in the repository are the final PDF file of the report as well as the R code in an RMD file.
+
+The rest of this README.md contains an overview of the project, data, and my findings. Please refer to the .PDF and .RMD files for analysis and code, respectively.
 
 ## Synopsis:
 The **``Disaster Relief Project``** is the final project for UVA's DS6021 Statistical Learning course wherein students are tasked with using various classification methods to solve a real historical data-mining problem — locating displaced persons living in makeshift shelters following the destruction of the earthquake in Haiti in 2010.
