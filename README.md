@@ -7,7 +7,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-# Disaster Relief Project
+---
 
 ## Metadata:
 Disaster Relief Project for the University of Virginia's DS6021 course.
