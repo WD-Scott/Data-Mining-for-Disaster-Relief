@@ -419,7 +419,7 @@ plot_rocs<-function(model, data, plot_title = "ROC curves", note = NULL,
 
 ##### (2.3.4) Run Time:
 
-We use the tictoc package and the *sys.time* function to time the train and test duration of each model. We use parallel processing to via the doParallel package to spread computations across multiple cores to increase computational efficiency. While the test and train time metrics are useful, they will likely vary across machines depending on specifications. Below are the machine specifications for the models trained in this report:
+We use the tictoc package and the *sys.time* function to time the train and test duration of each model. We use parallel processing via the doParallel package to spread computations across multiple cores and increase computational efficiency. While the test and train time metrics are useful, they will likely vary across machines depending on specifications. Below are the machine specifications for the models trained in this report:
 
 * OS: Mac - Ventura 13.5
 * Processor: Apple M2 Pro, 10-Core CPU
