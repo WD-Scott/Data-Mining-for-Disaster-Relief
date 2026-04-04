@@ -23,3 +23,323 @@ knitr::opts_chunk$set(
 )
 ```
 
+# 1. Environment Setup
+
+```{r load-utils}
+# Source all helper functions (plotting, tables, data loading, etc.)
+source(here::here("scripts", "utils.R"))
+
+# Additional packages not loaded in utils.R
+library(glmnet)
+library(randomForest)
+library(e1071)
+library(kernlab)
+library(MASS)
+library(pROC)
+library(plotly)
+library(scatterplot3d)
+
+# Start parallel backend
+cl <- setup_parallel()
+```
+
+# 2. Data Ingestion
+
+```{r load-data}
+data    <- load_training_data()
+holdout <- load_holdout_data()
+```
+
+```{r class-imbalance}
+eda_table <- data.frame(
+  `Tarp Status` = c("No", "Yes"),
+  Training      = c("61,219", "2,022"),
+  Holdout       = c("1,989,697", "14,480"),
+  `Training %`  = c(96.8, 3.2),
+  `Holdout %`   = c(99.27, 0.73),
+  check.names   = FALSE
+)
+
+styled_kable(eda_table, caption = "<b>Table 1: Class Imbalance</b>")
+```
+
+# 3. Exploratory Data Analysis
+
+```{r density-plots, fig.height=8}
+# Training densities
+p_red   <- plot_color_density(data, "Red",   "Red (Train)")
+p_green <- plot_color_density(data, "Green", "Green (Train)")
+p_blue  <- plot_color_density(data, "Blue",  "Blue (Train)")
+
+# Holdout densities
+p_b1 <- plot_color_density(holdout, "Red",   "Red (Holdout)")
+p_b2 <- plot_color_density(holdout, "Green", "Green (Holdout)")
+p_b3 <- plot_color_density(holdout, "Blue",  "Blue (Holdout)")
+
+(p_b1 + p_red + p_b2 + p_green + p_b3 + p_blue) +
+  plot_layout(guides = "collect", ncol = 2) +
+  plot_annotation(
+    title = "Figure 1: Color Distributions by Tarp Status"
+  ) &
+  theme(
+    plot.title   = element_text(face = "bold", size = 12, hjust = 0.5),
+    axis.ticks   = element_blank(),
+    axis.title   = element_blank(),
+    axis.text.y  = element_blank(),
+    legend.position    = "bottom",
+    legend.text        = element_text(face = "bold"),
+    legend.title       = element_text(face = "bold"),
+    legend.background  = element_rect(fill = "white", color = "grey35")
+  )
+```
+
+```{r 3d-scatter}
+# Subsample for visualization
+set.seed(1)
+data_sub    <- data    %>% sample_n(60000, replace = FALSE) %>% mutate(Source = "Training")
+holdout_sub <- holdout %>% sample_n(60000, replace = FALSE) %>% mutate(Source = "Holdout")
+combined    <- bind_rows(data_sub, holdout_sub)
+
+plot_ly(
+  combined,
+  x = ~Green, y = ~Red, z = ~Blue,
+  color  = ~interaction(Source, Tarp),
+  colors = colorRamp(c("black", "skyblue", "purple", "#E57200")),
+  type   = "scatter3d",
+  mode   = "markers",
+  marker = list(size = 1.6, opacity = 0.6, symbol = "circle-open")
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "Green"),
+      yaxis = list(title = "Red"),
+      zaxis = list(title = "Blue")
+    ),
+    title = "Figure 2: RGB Values by Dataset and Tarp Status"
+  )
+```
+
+# 4. Model Training
+
+All models use 10-fold stratified CV with AUC as the selection metric.
+
+```{r cv-setup}
+cv      <- make_cv_control(data)
+ctrl    <- cv$ctrl
+results <- list()   # Store model results for comparison
+```
+
+## 4.1 Logistic Regression
+
+```{r logistic}
+fit_logistic <- train_timed(Tarp ~ Red + Blue + Green, data, "glm", ctrl,
+                            family = "binomial")
+results$Logistic <- fit_logistic
+
+thresh_log <- compute_thresholds(fit_logistic$model)
+plot_threshold_grid(thresh_log, "Logistic")
+plot_roc_curves(fit_logistic$model, data,
+                title = "ROC Curves (Logistic)",
+                xlim = c(0, 0.08), ylim = c(0.75, 1))
+```
+
+## 4.2 LDA
+
+```{r lda}
+fit_lda <- train_timed(Tarp ~ log(Red) + log(Blue) + log(Green), data, "lda",
+                       ctrl, preProcess = c("center", "scale"))
+results$LDA <- fit_lda
+
+thresh_lda <- compute_thresholds(fit_lda$model)
+plot_threshold_grid(thresh_lda, "LDA")
+plot_roc_curves(fit_lda$model, data,
+                title = "ROC Curves (LDA)",
+                xlim = c(0, 0.15), ylim = c(0.85, 1))
+```
+
+## 4.3 QDA
+
+```{r qda}
+fit_qda <- train_timed(Tarp ~ Red + Blue + Green, data, "qda", ctrl)
+results$QDA <- fit_qda
+
+thresh_qda <- compute_thresholds(fit_qda$model)
+plot_threshold_grid(thresh_qda, "QDA")
+plot_roc_curves(fit_qda$model, data,
+                title = "ROC Curves (QDA)",
+                xlim = c(0, 0.15), ylim = c(0.85, 1))
+```
+
+## 4.4 KNN
+
+```{r knn}
+fit_knn <- train_timed(Tarp ~ Red + Blue + Green, data, "knn", ctrl,
+                       tuneLength = 10)
+results$KNN <- fit_knn
+
+# Plot AUC vs. K
+knn_k_df <- data.frame(
+  K   = fit_knn$model$results$k,
+  AUC = round(fit_knn$model$results$ROC, 5) * 100
+)
+ggplot(knn_k_df, aes(K, AUC)) +
+  geom_line(color = "#232D4B", linewidth = 0.5) +
+  geom_point(color = "#E57200", size = 1.5) +
+  labs(title = "AUC by K", x = "K", y = "AUC (CV)") +
+  scale_x_continuous(breaks = knn_k_df$K) +
+  theme_linedraw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(face = "bold"))
+
+thresh_knn <- compute_thresholds(fit_knn$model)
+plot_threshold_grid(thresh_knn, "KNN",
+                    subtitle = paste0("k = ", fit_knn$model$bestTune$k))
+plot_roc_curves(fit_knn$model, data,
+                title = "ROC Curves (KNN)",
+                note  = paste0("k = ", fit_knn$model$bestTune$k),
+                xlim = c(0, 0.007), ylim = c(0, 1))
+```
+
+## 4.5 Penalized Logistic Regression (Elastic Net)
+
+```{r plr}
+fit_plr <- train_timed(Tarp ~ Red + Blue + Green, data, "glmnet", ctrl,
+                       tuneLength = 20, allowParallel = TRUE)
+results$PLR <- fit_plr
+
+best_alpha  <- round(fit_plr$model$bestTune$alpha, 4)
+best_lambda <- signif(fit_plr$model$bestTune$lambda, 2)
+plr_note    <- paste0("\u03B1 = ", best_alpha, " | \u03BB = ", best_lambda)
+
+thresh_plr <- compute_thresholds(fit_plr$model)
+plot_threshold_grid(thresh_plr, "PLR", subtitle = plr_note)
+plot_roc_curves(fit_plr$model, data,
+                title = "ROC Curves (PLR)",
+                note  = plr_note,
+                xlim = c(0, 0.4), ylim = c(0.75, 1))
+```
+
+## 4.6 Random Forest
+
+```{r rf}
+mtry_grid <- expand.grid(mtry = c(1, 2))
+fit_rf <- train_timed(Tarp ~ Red + Green + Blue, data, "rf", ctrl,
+                      tuneGrid = mtry_grid, ntree = 500)
+results$RF <- fit_rf
+
+thresh_rf <- compute_thresholds(fit_rf$model)
+rf_note <- paste0("ntree = 500 | mtry = ", fit_rf$model$bestTune$mtry)
+plot_threshold_grid(thresh_rf, "Random Forest", subtitle = rf_note)
+plot_roc_curves(fit_rf$model, data,
+                title = "ROC Curves (RF)",
+                note  = rf_note,
+                xlim = c(0, 0.01), ylim = c(0, 1))
+```
+
+## 4.7 Support Vector Machine (RBF Kernel)
+
+```{r svm}
+svm_grid <- expand.grid(C = 0.25, sigma = seq(1, 3, 0.25))
+fit_svm <- train_timed(Tarp ~ Red + Green + Blue, data, "svmRadial", ctrl,
+                       tuneGrid = svm_grid)
+results$SVM <- fit_svm
+
+svm_note <- paste0(
+  "C = ", fit_svm$model$bestTune$C,
+  " | \u03B3 = ", round(fit_svm$model$bestTune$sigma, 4)
+)
+
+thresh_svm <- compute_thresholds(fit_svm$model)
+plot_threshold_grid(thresh_svm, "SVM (RBF)", subtitle = svm_note)
+plot_roc_curves(fit_svm$model, data,
+                title = "ROC Curves (SVM)",
+                note  = svm_note,
+                xlim = c(0, 0.01), ylim = c(0, 1))
+```
+
+# 5. Model Comparison
+
+```{r comparison-table}
+comparison <- purrr::imap_dfr(results, function(res, name) {
+  best_row <- res$model$results
+  if (nrow(best_row) > 1) {
+    # Pick the row matching bestTune
+    best_idx <- as.numeric(rownames(res$model$bestTune))
+    if (!is.na(best_idx) && best_idx <= nrow(best_row)) {
+      best_row <- best_row[best_idx, ]
+    } else {
+      best_row <- best_row[which.max(best_row$ROC), ]
+    }
+  }
+  data.frame(
+    Model       = name,
+    AUC         = round(best_row$ROC, 5) * 100,
+    Sensitivity = round(best_row$Sens, 4) * 100,
+    Specificity = round(best_row$Spec, 4) * 100,
+    `Train Time (s)` = round(res$elapsed, 2),
+    check.names = FALSE
+  )
+})
+
+styled_kable(comparison, caption = "<b>Table: Cross-Validation Summary</b>")
+```
+
+# 6. Holdout Evaluation
+
+```{r holdout-eval}
+# Deploy each model on the holdout set, measure prediction time
+holdout_results <- purrr::imap_dfr(results, function(res, name) {
+  start <- proc.time()
+  preds <- predict(res$model, newdata = holdout)
+  elapsed <- (proc.time() - start)["elapsed"]
+
+  cm <- confusionMatrix(preds, holdout$Tarp, positive = "Yes")
+
+  data.frame(
+    Model             = name,
+    `Balanced Accuracy` = round(cm$byClass["Balanced Accuracy"], 4) * 100,
+    Kappa             = round(cm$overall["Kappa"], 4) * 100,
+    F1                = round(cm$byClass["F1"], 4) * 100,
+    FPR               = round(1 - cm$byClass["Specificity"], 4) * 100,
+    `Deploy Time (s)` = round(elapsed, 2),
+    check.names       = FALSE
+  )
+})
+
+styled_kable(holdout_results, caption = "<b>Table: Holdout Performance</b>")
+```
+
+```{r holdout-confusion-matrices, fig.height=4, fig.width=10}
+cm_plots <- purrr::imap(results, function(res, name) {
+  preds <- predict(res$model, newdata = holdout)
+  cm    <- confusionMatrix(preds, holdout$Tarp, positive = "Yes")
+  plot_confusion_matrix(cm, name)
+})
+
+do.call(gridExtra::grid.arrange, c(cm_plots, ncol = 4))
+```
+
+# 7. Conclusions
+
+The **Penalized Logistic Regression** model is recommended for blue tarp detection.
+On the holdout set it achieved the highest AUC, Kappa, and F1 score, the
+second-lowest FPR, and the fastest deployment time. The traditional Logistic
+and LDA models are close contenders — their simplicity and interpretability
+make them strong alternatives when communicating results to non-technical
+stakeholders.
+
+Key limitations include the high multicollinearity among RGB predictors
+(VIFs > 200), the severe class imbalance, and the use of a single geographic
+region for training. Future work should explore color space transformations
+(e.g., HSL or CIELUV), over-sampling techniques like SMOTE, and validation
+on imagery from other disaster sites.
+
+```{r cleanup}
+stopCluster(cl)
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
