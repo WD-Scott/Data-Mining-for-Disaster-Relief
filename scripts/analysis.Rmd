@@ -1,1 +1,25 @@
-hello
+---
+title: "Data Mining for Disaster Relief"
+subtitle: "Classifying Blue Tarps in Post-Earthquake Haiti Satellite Imagery"
+author: "Wyatt Scott"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    code_folding: hide
+    fig_width: 10
+    fig_height: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center"
+)
+```
+
