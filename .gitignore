@@ -1,1 +1,36 @@
-hello
+# R session files
+.RData
+.Rhistory
+.Rprofile
+
+# RStudio project files
+.Rproj.user/
+*.Rproj
+
+# knitr / rmarkdown output
+*_cache/
+*_files/
+*.knit.md
+*.utf8.md
+
+# Rendered output (keep Report.pdf, ignore temp renders)
+*.html
+!docs/*.html
+
+# renv
+renv/library/
+renv/staging/
+renv/python/
+renv/sandbox/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files (too large for version control — see README for instructions)
+data/HaitiPixels.csv
+data/holdout/*.txt
+
+# Temporary files
+*.log
+*.tmp
