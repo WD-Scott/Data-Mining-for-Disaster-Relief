@@ -1,1 +1,9 @@
-hello
+# This directory should contain:
+
+# - HaitiPixels.csv (training data)
+
+# - holdout/        (directory of holdout .txt files)
+
+# 
+
+# See the README for data acquisition instructions.
