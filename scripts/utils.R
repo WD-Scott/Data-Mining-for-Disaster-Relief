@@ -45,6 +45,12 @@ setup_parallel <- function() {
 #' @keywords internal
 load_training_data <- function(path = here::here("data", "HaitiPixels.csv")) {
   dt <- data.table::fread(input = path)
+  stopifnot(
+    "Training CSV must contain columns: Class, Red, Green, Blue" =
+      all(c("Class", "Red", "Green", "Blue") %in% names(dt)),
+    "Training data contains NAs in color columns" =
+      !anyNA(dt[, .(Red, Green, Blue)])
+  )
   dt[, Tarp := factor(
     x      = data.table::fifelse(test = Class == "Blue Tarp", yes = "Yes", no = "No"),
     levels = c("No", "Yes")
@@ -70,7 +76,8 @@ load_training_data <- function(path = here::here("data", "HaitiPixels.csv")) {
 #' @keywords internal
 load_holdout_data <- function(dir = here::here("data")) {
   files <- list.files(path = dir, pattern = "\\.txt$", full.names = TRUE)
-  
+  stopifnot("No .txt holdout files found in directory" = length(files) > 0)
+
   holdout <- data.table::rbindlist(l = lapply(files, function(file) {
     lines <- readLines(con = file)[-c(1:8)]
     dt    <- data.table::fread(text = paste(lines, collapse = "\n"), drop = 1L)
@@ -88,6 +95,12 @@ load_holdout_data <- function(dir = here::here("data")) {
   
   holdout[, Tarp := factor(x = Tarp, levels = c("No", "Yes"))]
   holdout[, c("X", "Y", "MapX", "MapY", "Lat", "Lon") := NULL]
+  stopifnot(
+    "Holdout data must contain columns: Red, Green, Blue" =
+      all(c("Red", "Green", "Blue") %in% names(holdout)),
+    "Holdout data contains NAs in color columns" =
+      !anyNA(holdout[, .(Red, Green, Blue)])
+  )
   return(as.data.frame(holdout))
 }
 
@@ -142,6 +155,10 @@ make_cv_control <- function(data, seed = 1) {
 #'
 #' @keywords internal
 compute_thresholds <- function(model, thresholds = seq(from = 0.1, to = 0.9, by = 0.1)) {
+  stopifnot(
+    "model must be a caret train object" = inherits(model, "train"),
+    "thresholds must be in [0, 1]"       = all(thresholds >= 0 & thresholds <= 1)
+  )
   stats <- c("Balanced Accuracy", "Kappa", "Sensitivity", "Specificity", "Precision", "F1")
   
   set.seed(1)
@@ -182,6 +199,10 @@ compute_thresholds <- function(model, thresholds = seq(from = 0.1, to = 0.9, by 
 #'
 #' @keywords internal
 train_timed <- function(formula, data, method, ctrl, ...) {
+  stopifnot(
+    "formula must be a formula object"              = inherits(formula, "formula"),
+    "method must be a non-empty character string"    = is.character(method) && nchar(method) > 0
+  )
   set.seed(1)
   elapsed <- system.time(expr = {
     model <- caret::train(
@@ -316,6 +337,84 @@ plot_threshold_grid <- function(thresh_data, model_name, subtitle = NULL) {
 
 
 #' @title
+#' Compute Per-Fold AUC Values
+#'
+#' @description
+#' Iterates over the resampling folds stored in a \code{caret} model and
+#' computes ROCR prediction objects and AUC values for each fold.
+#'
+#' @param model \code{train} --- A fitted caret model with resampling indices.
+#' @param data \code{data.frame} --- The training data used to fit \code{model}.
+#'
+#' @return \code{list} --- Components:
+#'   \describe{
+#'     \item{roc_data}{\code{list} --- ROCR prediction objects, one per fold.}
+#'     \item{auc_values}{\code{dbl} --- AUC percentages, one per fold.}
+#'     \item{resamps}{\code{list} --- Named resampling index lists.}
+#'   }
+#'
+#' @keywords internal
+compute_fold_aucs <- function(model, data) {
+  resamps        <- model$control$index
+  names(resamps) <- paste("Fold", seq_along(resamps))
+
+  roc_data   <- vector(mode = "list", length = length(resamps))
+  auc_values <- numeric(length = length(resamps))
+
+  for (i in seq_along(resamps)) {
+    fold_data     <- data[resamps[[i]], ]
+    pred_probs    <- stats::predict(object = model, newdata = fold_data, type = "prob")[, "Yes"]
+    roc_data[[i]] <- ROCR::prediction(predictions = pred_probs, labels = fold_data$Tarp)
+    auc_values[i] <- round(
+      x      = as.numeric(ROCR::performance(roc_data[[i]], measure = "auc")@y.values),
+      digits = 5
+    ) * 100
+  }
+
+  list(roc_data = roc_data, auc_values = auc_values, resamps = resamps)
+}
+
+
+#' @title
+#' Compute Out-of-Fold ROC Curve and AUC
+#'
+#' @description
+#' Extracts out-of-fold predictions from a \code{caret} model at the best
+#' hyperparameters and computes the aggregate ROC curve and AUC via ROCR.
+#'
+#' @param model \code{train} --- A fitted caret model with \code{savePredictions = TRUE}.
+#'
+#' @return \code{list} --- Components:
+#'   \describe{
+#'     \item{roc}{\code{performance} --- ROCR performance object (TPR vs FPR).}
+#'     \item{auc}{\code{dbl} --- AUC as a percentage.}
+#'   }
+#'
+#' @keywords internal
+compute_oof_roc <- function(model) {
+  best  <- model$bestTune
+  preds <- model$pred
+  for (nm in names(best)) {
+    preds <- preds[preds[[nm]] == best[[nm]], ]
+  }
+  preds <- preds[complete.cases(preds[, c("No", "obs")]), ]
+
+  rates <- ROCR::prediction(
+    predictions    = preds$No,
+    labels         = preds$obs,
+    label.ordering = c("Yes", "No")
+  )
+  avg_roc <- ROCR::performance(prediction.obj = rates, measure = "tpr", x.measure = "fpr")
+  avg_auc <- round(
+    x      = as.numeric(ROCR::performance(rates, measure = "auc")@y.values),
+    digits = 5
+  ) * 100
+
+  list(roc = avg_roc, auc = avg_auc)
+}
+
+
+#' @title
 #' Per-Fold ROC Curves
 #'
 #' @description
@@ -334,42 +433,11 @@ plot_threshold_grid <- function(thresh_data, model_name, subtitle = NULL) {
 #' @keywords internal
 plot_roc_curves <- function(model, data, title = "ROC Curves", note = NULL, xlim = c(0, 1), ylim = c(0, 1)) {
 
-  resamps        <- model$control$index
-  names(resamps) <- paste("Fold", seq_along(resamps))
-  
-  roc_data   <- vector(mode = "list", length = length(resamps))
-  auc_values <- numeric(length = length(resamps))
-  
-  for (i in seq_along(resamps)) {
-    fold_data     <- data[resamps[[i]], ]
-    pred_probs    <- stats::predict(object  = model, newdata = fold_data, type = "prob")[, "Yes"]
-    roc_data[[i]] <- ROCR::prediction(predictions = pred_probs, labels = fold_data$Tarp)
-    auc_values[i] <- round(
-      x = as.numeric(ROCR::performance(roc_data[[i]], measure = "auc")@y.values),
-      digits = 5
-    ) * 100
-  }
-  
-  best   <- model$bestTune
-  preds  <- model$pred
-  for (nm in names(best)) {
-    preds <- preds[preds[[nm]] == best[[nm]], ]
-  }
-  preds <- preds[complete.cases(preds[, c("No", "obs")]), ]
+  fold_info <- compute_fold_aucs(model, data)
+  oof       <- compute_oof_roc(model)
 
-  rates <- ROCR::prediction(
-    predictions    = preds$No,
-    labels         = preds$obs,
-    label.ordering = c("Yes", "No")
-  )
-  avg_roc <- ROCR::performance(prediction.obj = rates, measure = "tpr", x.measure = "fpr")
-  avg_auc <- round(
-    x = as.numeric(ROCR::performance(rates, measure = "auc")@y.values),
-    digits = 5
-  ) * 100
-  
   graphics::plot(
-    x        = avg_roc,
+    x        = oof$roc,
     col      = "#232D4B",
     lwd      = 2.5,
     main     = title,
@@ -380,23 +448,23 @@ plot_roc_curves <- function(model, data, title = "ROC Curves", note = NULL, xlim
     font.lab = 2,
     bg       = "grey"
   )
-  
-  legend_text  <- paste0("OOF (AUC = ", format(avg_auc, nsmall = 3), ")")
-  fold_colors  <- grDevices::rainbow(n = length(resamps) - 1)
+
+  legend_text  <- paste0("OOF (AUC = ", format(oof$auc, nsmall = 3), ")")
+  fold_colors  <- grDevices::rainbow(n = length(fold_info$resamps) - 1)
   fold_counter <- 0
-  
-  for (i in seq_along(resamps)) {
-    if (!is.null(roc_data[[i]])) {
+
+  for (i in seq_along(fold_info$resamps)) {
+    if (!is.null(fold_info$roc_data[[i]])) {
       fold_perf <- ROCR::performance(
-        prediction.obj = roc_data[[i]],
+        prediction.obj = fold_info$roc_data[[i]],
         measure        = "tpr",
         x.measure      = "fpr"
       )
       legend_text <- c(
         legend_text,
         paste0(
-          names(resamps)[i], " (AUC = ",
-          format(round(auc_values[i], digits = 5), nsmall = 3), ")"
+          names(fold_info$resamps)[i], " (AUC = ",
+          format(round(fold_info$auc_values[i], digits = 5), nsmall = 3), ")"
         )
       )
       if (i != 1) {
@@ -410,9 +478,9 @@ plot_roc_curves <- function(model, data, title = "ROC Curves", note = NULL, xlim
       }
     }
   }
-  
+
   graphics::lines(x = xlim, y = ylim, col = "#E57200")
-  
+
   graphics::legend(
     "bottomright",
     legend    = legend_text,
@@ -422,7 +490,7 @@ plot_roc_curves <- function(model, data, title = "ROC Curves", note = NULL, xlim
     bg        = "grey95",
     text.font = 2
   )
-  
+
   if (!is.null(note)) {
     graphics::mtext(text = note, side = 3, font = 2, cex = 0.9)
   }
@@ -541,6 +609,7 @@ evaluate_holdout <- function(model, holdout, threshold) {
     x      = ifelse(test = prob$Yes > threshold, yes = "Yes", no = "No"),
     levels = c("No", "Yes")
   )
+  stopifnot("Predictions length must match holdout rows" = length(pred) == nrow(holdout))
 
   elapsed <- (proc.time() - start)[["elapsed"]]
 

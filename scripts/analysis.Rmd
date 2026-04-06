@@ -579,7 +579,7 @@ where $x_0$ represents the test observation to be classified and $\mathscr{N}_0$
 
 ### 6.4.1 Training and Parameter/Hyperparameter Optimization
 
-```{r knn}
+```{r knn, cache=TRUE}
 fit_knn <- train_timed(
   formula    = Tarp ~ Red + Blue + Green,
   data       = data,
@@ -657,7 +657,7 @@ We must define two hyperparameters ($\alpha$ and $\lambda$) given that we define
 
 ### 6.5.1 Training and Parameter/Hyperparameter Optimization
 
-```{r plr}
+```{r plr, cache=TRUE}
 fit_plr <- train_timed(
   formula       = Tarp ~ Red + Blue + Green,
   data          = data,
@@ -727,7 +727,7 @@ RF decorrelates the trees by using a random subset of $m$ predictors as candidat
 
 ### 6.6.1 Training and Parameter/Hyperparameter Optimization
 
-```{r rf}
+```{r rf, cache=TRUE}
 mtry_grid <- expand.grid(mtry = c(1, 2))
 
 fit_rf <- train_timed(
@@ -783,7 +783,7 @@ The ROC curves and AUC values for the RF model show that it is highly accurate a
 
 ### 6.6.3 Final Model
 
-```{r rf-final-model}
+```{r rf-final-model, cache=TRUE}
 rf_fm  <- fit_rf$model$finalModel
 rf_oob <- round(x = rf_fm$err.rate[nrow(rf_fm$err.rate), "OOB"] * 100, digits = 2)
 
@@ -1061,7 +1061,7 @@ styled_kable(df = comparison_with_range, caption = "<b>Table 15: Cross-Validatio
 
 We evaluate each model on the holdout set using the per-model thresholds selected during cross-validation threshold analysis.
 
-```{r holdout-eval}
+```{r holdout-eval, cache=TRUE}
 thresholds <- c(
   Logistic = 0.9,
   LDA      = 0.9,
@@ -1105,7 +1105,7 @@ styled_kable(df = holdout_with_range, caption = "<b>Table 16: Holdout Performanc
 
 ## 8.1 Holdout Confusion Matrices
 
-```{r holdout-confusion-matrices, fig.height=4, fig.width=10}
+```{r holdout-confusion-matrices, fig.height=4, fig.width=10, cache=TRUE}
 cm_plots <- Map(
   f = function(res, name) {
     prob  <- stats::predict(object = res$model, newdata = holdout, type = "prob")
@@ -1123,7 +1123,7 @@ do.call(what = gridExtra::grid.arrange, args = c(cm_plots, ncol = 4))
 
 The plots below show the ROC curves for each model evaluated on the training and holdout data.
 
-```{r holdout-roc-improved, fig.height=4, fig.width=5, results='asis'}
+```{r holdout-roc-improved, fig.height=4, fig.width=5, results='asis', cache=TRUE}
 for (name in names(results)) {
   plot_roc_holdout_comparison(
     model      = results[[name]]$model,
@@ -1139,6 +1139,24 @@ for (name in names(results)) {
     ylim       = c(0.85, 1)
   )
 }
+```
+
+```{r export-readme-figures, include=FALSE}
+png(here::here("images", "plr_threshold_grid.png"), width = 800, height = 500, res = 100)
+plot_threshold_grid(thresh_data = thresh_plr, model_name = "PLR", subtitle = plr_note)
+dev.off()
+
+png(here::here("images", "plr_holdout_roc.png"), width = 600, height = 500, res = 100)
+plot_roc_holdout_comparison(
+  model      = results$PLR$model,
+  holdout    = holdout,
+  train_data = data,
+  title      = "ROC Curves (PLR)",
+  note       = plr_note,
+  xlim       = c(0, 0.15),
+  ylim       = c(0.85, 1)
+)
+dev.off()
 ```
 
 ---

@@ -41,14 +41,22 @@ Data-Mining-for-Disaster-Relief/
 
 ## Key Results
 
-| Model | AUC (Holdout) | FPR (Holdout) | F1 (Holdout) | Deploy Time |
+| Model | AUC (%) | FPR (%) | F1 (%) | Deploy Time (s) |
 |-------|:---:|:---:|:---:|:---:|
-| **PLR (recommended)** | **Highest** | **2nd-lowest** | **Highest** | **Fastest** |
-| Logistic | Close 2nd | Lowest | Close 2nd | Fast |
-| LDA | Close 3rd | Low | Close 3rd | Fast |
-| SVM (RBF) | Best in CV | Low | Good | ~5× slower |
+| **PLR (recommended)** | **99.97** | **0.19** | **87.23** | **1.10** |
+| Logistic | 99.94 | 0.26 | 83.69 | 2.75 |
+| LDA | 99.96 | 0.21 | 85.83 | 4.64 |
+| SVM (RBF) | 99.84 | 0.26 | 80.15 | 52.12 |
 
 The SVM performed best during cross-validation but the PLR generalized better to the holdout set, likely due to the Elastic Net penalty mitigating multicollinearity among the highly correlated RGB predictors (pairwise correlations ≥ 0.94).
+
+<p align="center">
+  <img src="images/plr_threshold_grid.png" alt="PLR Threshold Analysis" width="600"/>
+</p>
+
+<p align="center">
+  <img src="images/plr_holdout_roc.png" alt="PLR Holdout ROC Curve" width="450"/>
+</p>
 
 ---
 
@@ -77,6 +85,14 @@ make report   # render the analysis to Report.pdf
 ```
 
 **Requirements:** R ≥ 4.1 and GNU Make. The `make setup` step restores the exact package versions from `renv.lock`.
+
+### Interactive Usage
+
+```r
+source("scripts/utils.R")
+data    <- load_training_data()
+holdout <- load_holdout_data()
+```
 
 ---
 
