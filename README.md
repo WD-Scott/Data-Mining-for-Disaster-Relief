@@ -84,7 +84,7 @@ Place the data files in `data/` as described above, then:
 
 ```bash
 make setup    # install R dependencies via renv
-make report   # render the analysis to Report.pdf
+make report   # render the analysis to Report.html
 ```
 
 **Requirements:** R ≥ 4.1 and GNU Make. The `make setup` step restores the exact package versions from `renv.lock`.

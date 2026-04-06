@@ -1,8 +1,8 @@
 .PHONY: report setup clean
 
-## Render the analysis notebook to Report.pdf
+## Render the analysis notebook to Report.html
 report:
-	Rscript -e 'rmarkdown::render("scripts/analysis.Rmd", output_file = "../Report.pdf")'
+	Rscript -e 'rmarkdown::render("scripts/analysis.Rmd", output_file = "../Report.html")'
 
 ## Install all dependencies via renv
 setup:
@@ -10,5 +10,5 @@ setup:
 
 ## Remove rendered output and cached files
 clean:
-	rm -f Report.pdf
+	rm -f Report.html
 	rm -rf scripts/analysis_cache scripts/analysis_files

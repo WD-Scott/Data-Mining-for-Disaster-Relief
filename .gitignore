@@ -15,7 +15,6 @@
 # Rendered output
 *.html
 !docs/*.html
-Report.pdf
 
 # renv
 renv/library/
@@ -31,6 +30,9 @@ Thumbs.db
 data/HaitiPixels.csv
 data/*.txt
 data/*.jpg
+
+# Saved models (too large for version control — regenerate via make report)
+models/*.rds
 
 # Temporary files
 *.log
