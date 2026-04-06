@@ -16,34 +16,56 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo    = TRUE,
-  message = FALSE,
-  warning = FALSE,
+  echo      = TRUE,
+  message   = FALSE,
+  warning   = FALSE,
   fig.align = "center"
 )
 ```
 
-# 1. Environment Setup
+# 1. Executive Summary
+
+Tragedy struck in January 2010 when a magnitude 7.0 earthquake struck the Republic of Haiti.[^1] According to the Haitian government, the earthquake left over 316,000 dead or missing, 300,000 injured, and over 1.3 million homeless and displaced.[^2] Haiti already suffered from poor water quality, among other stresses, before the earthquake that all but rendered obsolete the Haitian government; the earthquake destroyed the presidential palace and 14 of 16 government ministries and claimed the lives of numerous government officials. The earthquake decimated the island nation's infrastructure, and on the day of the disaster, the President of Haiti declared a national emergency and requested immediate assistance from the United States and the international community.[^3]
+
+[^1]: Reginald DesRoches et al., "Overview of the 2010 Haiti Earthquake," United States Geological Survey (Washington, DC: 23 Jan. 2011), available at <https://escweb.wr.usgs.gov/share/mooney/142.pdf>
+[^2]: Government of the Republic of Haiti, "Action Plan for National Recovery and Development of Haiti," (Port-au-Prince, Haiti: 2010).
+[^3]: Gary Cecchine et al., "The U.S. Military Response to the 2010 Haiti Earthquake: Considerations for Army Leaders," The Rand Corporation (Washington, DC: 2013).
+
+In the aftermath, many stayed in makeshift shelters, fearing the aftershocks would further destroy what structures remained; building codes are weak, and construction standards on the island are low. Well over a million displaced persons created temporary shelters, many using blue tarps, which could serve as good indicators for locating the displaced persons to provide relief and assistance. Finding these blue tarps was challenging for a team of researchers from various institutes and organizations that collected aerial imagery over Haiti. The issue was that aid workers could not quickly search the thousands of images to locate the tarps and communicate those locations to rescue workers on the ground.
+
+Researchers converted the aerial images into machine-readable datasets of Red, Green, and Blue (RGB) values. This project uses one such dataset to find an optimal model out of seven statistical learning methods to classify pixels accurately as to whether they belong to a blue tarp. The seven statistical learning methods include logistic regression, linear discriminant analysis, quadratic discriminant analysis, K-nearest neighbors, penalized logistic regression, random forest, and support vector machine.
+
+---
+
+# 2. Environment Setup
 
 ```{r load-utils}
-# Source all helper functions (plotting, tables, data loading, etc.)
 source(here::here("scripts", "utils.R"))
 
-# Additional packages not loaded in utils.R
+# Model-specific packages (mainly for caret)
 library(glmnet)
 library(randomForest)
-library(e1071)
 library(kernlab)
 library(MASS)
-library(pROC)
 library(plotly)
-library(scatterplot3d)
 
-# Start parallel backend
 cl <- setup_parallel()
 ```
 
-# 2. Data Ingestion
+# 3. Data Ingestion
+
+We train the models using a dataset of 63,241 observations and test them using a holdout set of 2,004,177 observations.
+
+The training data contains 63,241 observations with four columns:
+
+- **`Class`**: Categorical variable for pixel classification, including Blue Tarp, Rooftop, Soil, Various Non-Tarp, and Vegetation.
+- **`Red`**: Numeric variable for the pixel's Red color quantity.
+- **`Green`**: Numeric variable for the pixel's Green color quantity.
+- **`Blue`**: Numeric variable for the pixel's Blue color quantity.
+
+Several steps were necessary to wrangle the data for modeling. First, we created a factor type variable, **`Tarp`**, to differentiate observations identified as Blue Tarps (e.g., **`Tarp=Yes`**) from those identified as Rooftop, Soil, Various Non-Tarp, or Vegetation (e.g., **`Tarp=No`**).
+
+The holdout set required more wrangling to get it into a format comparable with the training data. The holdout files use column names **`B1`**, **`B2`**, and **`B3`** rather than **`Red`**, **`Green`**, and **`Blue`**. By comparing the density distributions and mean values of each column between the training and holdout sets, we determined that **`B1`** represents **`Red`**, **`B2`** represents **`Green`**, and **`B3`** represents **`Blue`**. The `load_holdout_data()` function in `utils.R` handles this mapping automatically.
 
 ```{r load-data}
 data    <- load_training_data()
@@ -52,64 +74,63 @@ holdout <- load_holdout_data()
 
 ```{r class-imbalance}
 eda_table <- data.frame(
-  `Tarp Status` = c("No", "Yes"),
+  "Tarp Status" = c("No", "Yes"),
   Training      = c("61,219", "2,022"),
   Holdout       = c("1,989,697", "14,480"),
-  `Training %`  = c(96.8, 3.2),
-  `Holdout %`   = c(99.27, 0.73),
+  "Training %"  = c(96.8, 3.2),
+  "Holdout %"   = c(99.27, 0.73),
   check.names   = FALSE
 )
 
-styled_kable(eda_table, caption = "<b>Table 1: Class Imbalance</b>")
+styled_kable(df = eda_table, caption = "<b>Table 1: Class Imbalance</b>")
 ```
 
-# 3. Exploratory Data Analysis
+The frequency table tells us that both datasets have significant class imbalance and the holdout data is more imbalanced than the training data.
+
+# 4. Exploratory Data Analysis
+
+We use density plots to explore the color distributions for the training and holdout sets based on **`Tarp`** status.
 
 ```{r density-plots, fig.height=8}
-# Training densities
-p_red   <- plot_color_density(data, "Red",   "Red (Train)")
-p_green <- plot_color_density(data, "Green", "Green (Train)")
-p_blue  <- plot_color_density(data, "Blue",  "Blue (Train)")
+p_red   <- plot_color_density(data = data,    x_var = "Red",   title = "Red (Train)")
+p_green <- plot_color_density(data = data,    x_var = "Green", title = "Green (Train)")
+p_blue  <- plot_color_density(data = data,    x_var = "Blue",  title = "Blue (Train)")
+p_b1    <- plot_color_density(data = holdout, x_var = "Red",   title = "Red (Holdout)")
+p_b2    <- plot_color_density(data = holdout, x_var = "Green", title = "Green (Holdout)")
+p_b3    <- plot_color_density(data = holdout, x_var = "Blue",  title = "Blue (Holdout)")
 
-# Holdout densities
-p_b1 <- plot_color_density(holdout, "Red",   "Red (Holdout)")
-p_b2 <- plot_color_density(holdout, "Green", "Green (Holdout)")
-p_b3 <- plot_color_density(holdout, "Blue",  "Blue (Holdout)")
-
-(p_b1 + p_red + p_b2 + p_green + p_b3 + p_blue) +
-  plot_layout(guides = "collect", ncol = 2) +
-  plot_annotation(
-    title = "Figure 1: Color Distributions by Tarp Status"
-  ) &
-  theme(
-    plot.title   = element_text(face = "bold", size = 12, hjust = 0.5),
-    axis.ticks   = element_blank(),
-    axis.title   = element_blank(),
-    axis.text.y  = element_blank(),
-    legend.position    = "bottom",
-    legend.text        = element_text(face = "bold"),
-    legend.title       = element_text(face = "bold"),
-    legend.background  = element_rect(fill = "white", color = "grey35")
+gridExtra::grid.arrange(
+  p_b1, p_red, p_b2, p_green, p_b3, p_blue,
+  ncol = 2,
+  top  = grid::textGrob(
+    label = "Figure 1: Color Distributions by Tarp Status",
+    gp    = grid::gpar(fontsize = 14, font = 2)
   )
+)
 ```
 
-```{r 3d-scatter}
-# Subsample for visualization
-set.seed(1)
-data_sub    <- data    %>% sample_n(60000, replace = FALSE) %>% mutate(Source = "Training")
-holdout_sub <- holdout %>% sample_n(60000, replace = FALSE) %>% mutate(Source = "Holdout")
-combined    <- bind_rows(data_sub, holdout_sub)
+Next, we create a 3D scatterplot of all observations by **`Tarp`** status, using the RGB values for each of the three axes. We took a random subset of 60,000 observations from the training and holdout data, and colored the observations by **`Tarp`** status and by which dataset they belong to. The plot below shows a clear class-separating hyperplane for both datasets, though the separation appears clearer for the holdout data; we should be able to accurately predict pixels' classes for the **`Tarp`** variable using RGB values as predictors.
 
-plot_ly(
-  combined,
-  x = ~Green, y = ~Red, z = ~Blue,
+```{r 3d-scatter}
+set.seed(1)
+data_sub           <- data[sample(x = nrow(data), size = 60000), ]
+data_sub$Source    <- "Training"
+holdout_sub        <- holdout[sample(x = nrow(holdout), size = 60000), ]
+holdout_sub$Source <- "Holdout"
+combined <- rbind(data_sub, holdout_sub)
+
+plotly::plot_ly(
+  data   = combined,
+  x      = ~Green,
+  y      = ~Red,
+  z      = ~Blue,
   color  = ~interaction(Source, Tarp),
-  colors = colorRamp(c("black", "skyblue", "purple", "#E57200")),
+  colors = grDevices::colorRamp(c("black", "skyblue", "purple", "#E57200")),
   type   = "scatter3d",
   mode   = "markers",
   marker = list(size = 1.6, opacity = 0.6, symbol = "circle-open")
-) %>%
-  layout(
+) |>
+  plotly::layout(
     scene = list(
       xaxis = list(title = "Green"),
       yaxis = list(title = "Red"),
@@ -119,227 +140,1061 @@ plot_ly(
   )
 ```
 
-# 4. Model Training
+---
+
+# 5. Methods
+
+## 5.1 Parameter Optimization
+
+Using k-fold cross-validation with $k=10$, we fit all models on the three-dimensional, two-class data. K-fold CV randomly splits the observations in the data into $k$ groups (or folds, 10, in this case) of approximately equal size. Several metrics are computed for each fold, and the process is repeated 10 times with a different validation set each time. This process results in 10 estimates for each metric that are then averaged. Because the data in this project are simulated (i.e., we know the true classification of each pixel), we can compute the true test error and evaluate the accuracy of our CV results. Take accuracy, for example, where $k=10$ and $accuracy_i$ represents the model's accuracy on the $i$th fold:
+
+$$
+\text{Accuracy} = \frac{1}{k}\sum_{i=1}^k \text{accuracy}_i \tag{Equation 1}
+$$
+
+10-fold CV allows for lower variability in the test error estimates, given how the formula averages across folds. K-fold CV with $k=10$ has "been shown empirically to yield test error rate estimates that suffer neither from excessively high bias nor from very high variance."[^5]
+
+[^5]: James, G. et al., *An Introduction to Statistical Learning*, (Springer, 2021) pp. 198-208.
+
+While 10-fold CV provides less variability in the test error estimates, it leads to an intermediate level of bias as each training set only contains ~56,916.9 observations, derived from the following formula where $k=10$ and $n=63,241$:
+
+$$
+(k-1)n/k \tag{Equation 2}
+$$
+
+## 5.2 Train Control and Threshold Analysis
+
+We leverage the *trainControl* function to define the training control, specifying the method as "cv" and number of folds as $10$. To ensure consistency, we define several objects and pass them to the *trainControl* function; for example, we pass "folds" to the index parameter to achieve identical stratified samples across models. The caret package, by default, selects the best model using accuracy, but accuracy can be misleading in the context of imbalanced data (see section 5.3), so we set the *summaryFunction* argument equal to caret's built-in *twoClassSummary* function, which forces caret to instead select the best model based on AUROC. We use the *train* function from the caret package to fit the models.
+
+Determining the appropriate decision rule cutoff (i.e., threshold) without substantive domain expertise is difficult. To evaluate the models at various thresholds, we use the caret package's *thresholder* function, which "uses the resampling results from a train object to generate performance statistics over a set of probability thresholds for two-class problems."[^7] We evaluate Balanced Accuracy, Kappa, Sensitivity, Specificity, Precision, F1, and False Positive Rate (FPR) at each threshold between 0.1 and 0.9 in increments of 0.1.
+
+[^7]: Kuhn, M., "Building Predictive Models in R Using the caret Package," *Journal of Statistical Software*, vol. 28, no. 5 (2008) pp. 1--26.
+
+We believe it's important to focus on FPR and Balanced Accuracy instead of False Negative Rate (FNR) and Accuracy because the cost is high in terms of time and, potentially, life if the model incorrectly predicts a pixel to belong to a blue tarp; a team of aid providers using this information could arrive at locations where there are no displaced persons because the model incorrectly predicted blue tarps in those locations. Further, Accuracy is a misleading measure given class imbalance; we could have high Accuracy, yet the FPR or the FNR could be high. In this context, it seems more informative to look at the FPR and Balanced Accuracy.
+
+## 5.3 Evaluating Model Performance
+
+### 5.3.1 Balanced Accuracy and Cohen's Kappa
+
+The unbalanced nature of the classes leads us to consider Balanced Accuracy and Kappa over Accuracy.[^8]
+
+[^8]: Jacob Cohen, "A Coefficient of Agreement for Nominal Scales," *Journal of Educational and Psychological Measurement*, vol. 20, no. 1 (1960) pp. 37-46.
+
+Balanced Accuracy is the average between sensitivity and specificity, measuring the average accuracy obtained from the minority and majority classes:
+
+$$
+\frac{sensitivity + specificity}{2} \tag{Equation 3}
+$$
+
+To calculate Kappa, we must first calculate *random accuracy* via the following formula:
+
+$$
+\text{random accuracy} = \frac{(TP+FN)(TP+FP) + (TN+FP)(TN+FN)}{(TP + TN + FP + FN)^2} \tag{Equation 4}
+$$
+
+From here, we calculate Kappa:
+
+$$
+Kappa = \frac{\text{accuracy - random accuracy}}{1 - \text{random accuracy}} \tag{Equation 5}
+$$
+
+Kappa indicates how the model performs compared to random guessing, with values ranging from -1 (the model performs worse than random guessing) to +1 (a perfect model). A Kappa of 0 would mean the model performs as well as random guessing.[^9] We categorize Kappa values based on the work of Richard Landis and Gary Koch.[^10]
+
+[^9]: Esposito, C. et al, "GHOST: Adjusting the Decision Threshold to Handle Imbalanced Data in Machine Learning," *Journal of Chemical Information and Modeling*, no. 61 (2021) pp. 2623-2640.
+[^10]: J. Richard Landis and Gary G. Koch, "The Measurement of Observer Agreement for Categorical Data," *Biometrics* vol. 33, no. 1 (1977) pp. 159-174.
+
+### 5.3.2 F1 Score
+
+We also evaluate F1 scores at each threshold to gauge performance. Rather than use precision or recall separately, the F1 statistic effectively combines their respective trade-offs into a single statistic reflecting "the 'goodness' of a classifier in the presence of rare classes."[^11]
+
+[^11]: Chawla, N.V., *Data Mining for Imbalanced Datasets: An Overview*, in Maimon, O., Rokach, L. (eds) "Data Mining and Knowledge Discovery Handbook," Springer, (Boston, MA: 2005).
+
+Precision measures how much the False Positives (FPs) influence error:
+
+$$
+precision = \frac{TP}{TP+FP} \tag{Equation 6}
+$$
+
+Recall measures how much False Negatives (FNs) influence the error:
+
+$$
+recall = \frac{TP}{TP+FN} \tag{Equation 7}
+$$
+
+The FNs are important in that if a model's FNR is high and disaster relief efforts use that model, then the relief groups on the ground could bypass certain locations that the model wrongly predicted not to have blue tarps, thereby overlooking displaced persons.
+
+Combining precision and recall provides the formula for F1 where $\beta$ denotes the relative importance of precision vs. recall (usually set to 1):[^12]
+
+[^12]: Ibid, Chawla, N.V. (pp. 857).
+
+$$
+F1 = \frac{(1+\beta^2) \cdot recall \cdot precision}{\beta^2 \cdot recall + precision} \tag{Equation 8}
+$$
+
+The F1 score is the harmonic mean of precision and recall and is well-suited for this dataset; many studies note the usefulness of F1 scores for evaluating classifier model performance with imbalanced classes.[^13] In this dataset, for example, a model that predicts every pixel not to belong to blue tarps (e.g., **`Tarp=No`**) would be 96.8% accurate on the training data and over 99% accurate on the holdout data.
+
+[^13]: Meng Liu et al., "Cost-Sensitive Feature Selection by Optimizing F-Measures," *IEEE Trans Image Process* vol. 27, no. 3, (2018), pp. 1323-1335.
+
+### 5.3.3 ROC Curve and AUC
+
+We use Receiver Operating Characteristic (ROC) curves and the Area Under the Curve (AUC) to evaluate and compare model performance. The ROC curve plots have two dimensions; a y-axis representing the Sensitivity (TPR) and an x-axis representing $1-Specificity$ (FPR). The ROC curves show the TPR and FPR for every possible threshold. A model that classifies at random will have a ROC curve lying along the diagonal, whereas a perfect model will have a sensitivity and specificity of 1 and would lie along the (0,1) position. The further the ROC curve is from the diagonal and closer to (0,1), the better the model is at correctly classifying observations.
+
+We generate the ROC curves for each model and each fold using the out-of-fold (OOF) predicted probabilities returned from **`model$pred`**; this approach generates a less biased performance metric using CV results instead of the data the models were trained with.
+
+For AUC, a value of $1.0$ indicates a model that correctly classifies every observation. An AUC of $0.5$ would indicate the model randomly guesses.
+
+**Note on ROC curves in this report**: The dark-blue line represents the ROC curve using the OOF sample from CV; the other, rainbow-colored lines represent the ROC curve for each of the ten folds. The plots are zoomed in on both axes to provide a better view of the ROC curve differences. The ROC curves in the holdout evaluation section are slightly different; these plots include a dark-blue line as before and one orange line that represents the ROC curve for the model tested against the holdout set.
+
+### 5.3.4 Run Time
+
+We time the train and test duration of each model. We use parallel processing via the doParallel package to spread computations across multiple cores and increase computational efficiency. While the test and train time metrics are useful, they will likely vary across machines depending on specifications.
+
+---
+
+# 6. Model Training
 
 All models use 10-fold stratified CV with AUC as the selection metric.
 
 ```{r cv-setup}
-cv      <- make_cv_control(data)
+cv      <- make_cv_control(data = data)
 ctrl    <- cv$ctrl
-results <- list()   # Store model results for comparison
+results <- list()
 ```
 
-## 4.1 Logistic Regression
+## 6.1 Logistic Regression
+
+We fit an additive logistic regression model with all three predictors:
+
+$$
+Tarp \sim Red(x_1) + Blue(x_2) + Green(x_3) \tag{Equation 9}
+$$
+
+### 6.1.1 Training and Parameter/Hyperparameter Optimization
 
 ```{r logistic}
-fit_logistic <- train_timed(Tarp ~ Red + Blue + Green, data, "glm", ctrl,
-                            family = "binomial")
+fit_logistic <- train_timed(
+  formula = Tarp ~ Red + Blue + Green,
+  data    = data,
+  method  = "glm",
+  ctrl    = ctrl,
+  family  = "binomial"
+)
 results$Logistic <- fit_logistic
-
-thresh_log <- compute_thresholds(fit_logistic$model)
-plot_threshold_grid(thresh_log, "Logistic")
-plot_roc_curves(fit_logistic$model, data,
-                title = "ROC Curves (Logistic)",
-                xlim = c(0, 0.08), ylim = c(0.75, 1))
 ```
 
-## 4.2 LDA
+```{r logistic-cv-results}
+log_cv <- data.frame(
+  ROC         = round(x = fit_logistic$model$results$ROC, digits = 4) * 100,
+  Sensitivity = round(x = fit_logistic$model$results$Sens, digits = 4) * 100,
+  Specificity = round(x = fit_logistic$model$results$Spec, digits = 4) * 100
+)
+
+styled_kable(df = log_cv, caption = "<b>Table 2: Logistic CV Results</b>", bold_col1 = FALSE)
+```
+
+### 6.1.2 Threshold Analysis and ROC Curve
+
+```{r logistic-thresh, fig.height=3.5}
+thresh_log <- compute_thresholds(model = fit_logistic$model)
+plot_threshold_grid(thresh_data = thresh_log, model_name = "Logistic")
+```
+
+Comparing the summary statistics for the logistic regression model at various thresholds, we find that the best overall performance occurs at a threshold of 0.9, where FPR is the lowest. The trade-off between a Kappa of 0.928 at a threshold of 0.7 and 0.867 at a threshold of 0.9 is insufficient to warrant going with the former, whereas the change in FPR from 0.0890 to 0.0341 between those same thresholds is significant. The Balanced Accuracy, Kappa, and F1 values barely fluctuate between a threshold of 0.7 and 0.9, so the decision to choose a threshold of 0.9 for this logistic regression model came down to the change in FPR.
+
+```{r logistic-roc}
+plot_roc_curves(
+  model = fit_logistic$model, data = data,
+  title = "ROC Curves (Logistic)",
+  xlim  = c(0, 0.08), ylim = c(0.75, 1)
+)
+```
+
+The ROC curves and AUC values for the logistic model show that it is accurate and far better than random guessing. The ROC curve for the OOF sample is similar to the fold curves, so the model seems not to over-fit the training data.
+
+### 6.1.3 Final Model
+
+```{r logistic-final-model}
+log_coefs <- coef(fit_logistic$model$finalModel)
+
+log_finmd <- data.frame(
+  Betas = c("\u03B2\u2080 (Intercept)", "\u03B2\u2081 (Red)", "\u03B2\u2082 (Blue)", "\u03B2\u2083 (Green)"),
+  Coefficients = round(x = as.numeric(log_coefs), digits = 4)
+)
+
+log_dev_null <- fit_logistic$model$finalModel$null.deviance
+log_dev_res  <- fit_logistic$model$finalModel$deviance
+log_aic      <- fit_logistic$model$finalModel$aic
+log_df_total <- fit_logistic$model$finalModel$df.null
+log_df_res   <- fit_logistic$model$finalModel$df.residual
+
+footnotes <- c(
+  paste0("Degrees of Freedom: Total = ", format(log_df_total, big.mark = ","),
+         " | Residual = ", format(log_df_res, big.mark = ",")),
+  paste0("Deviance: Null = ", format(round(log_dev_null), big.mark = ","),
+         " | Residual = ", format(round(log_dev_res), big.mark = ",")),
+  paste0("AIC = ", format(round(log_aic), big.mark = ","))
+)
+
+styled_kable(df = log_finmd, caption = "<b>Table 3: Logistic finalModel</b>") |>
+  kableExtra::add_footnote(label = footnotes, notation = "none")
+```
+
+The following equation represents the logistic regression model, where $x_1$, $x_2$, and $x_3$ denote **`Red`**, **`Blue`**, and **`Green`**, respectively:
+
+$$
+log(\frac{\hatπ}{1-\hatπ}) = {0.2098} - {0.2603(x_1)} + {0.4724(x_2)} - {0.2183(x_3)} \tag{Equation 10}
+$$
+
+Below, we provide context behind the estimated regression coefficients.
+
+-   $\hat{\beta_0} = 0.2098$: This indicates the estimated log odds of the probability that the pixel belongs to a blue tarp (e.g., **`Tarp=Yes`**) when $x_1 = x_2 = x_3 = 0$.
+
+-   $\hat{\beta_1} = - 0.2603$: This means that, for an additional one unit increase in **`Red`**, the estimated odds of the pixel belonging to a blue tarp gets multiplied by a factor of $exp(-0.2603) = 0.7708126$. Put differently, for an additional one unit increase in **`Red`** (on average), the estimated log odds of a pixel belonging to a blue tarp decreases by 0.26031 while controlling for **`Blue`** and **`Green`**.
+
+-   $\hat{\beta_2} = 0.4724$: This means that, for an additional one unit increase in **`Blue`**, the estimated odds of the pixel belonging to a blue tarp gets multiplied by a factor of $exp(0.4724) = 1.603855$. Put differently, for an additional one unit increase in **`Blue`** (on average), the estimated log odds of the pixel belonging to a blue tarp decreases by 0.47241 while controlling for **`Red`** and **`Green`**.
+
+-   $\hat{\beta_3} = - 0.2183$: This means that, for an additional one unit increase in **`Green`**, the estimated odds of the pixel belonging to a blue tarp gets multiplied by a factor of $exp(-0.2183) = 0.8038762$. Put differently, for an additional one unit increase in **`Green`** (on average), the estimated log odds of the pixel belonging to a blue tarp decreases by 0.21831 while controlling for **`Red`** and **`Blue`**.
+
+### 6.1.4 Assumptions and Limitations
+
+The additive logistic regression model assumes that the relationship between the predictors and response is linear; it assumes that the effect of each color value on the log odds is constant and additive. It also assumes an absence of multicollinearity, which does not hold for this dataset.
+
+```{r logistic-vif-cor}
+cor_mat <- round(x = cor(data[, c("Red", "Green", "Blue")]), digits = 2)
+cor_df  <- data.frame(
+  Predictor = rownames(cor_mat),
+  as.data.frame(cor_mat),
+  check.names = FALSE
+)
+
+X <- model.matrix(fit_logistic$model$finalModel)[, -1]
+vifs <- diag(solve(cor(X)))
+vif_df <- data.frame(
+  Predictor = names(vifs),
+  VIFs      = round(x = vifs, digits = 3)
+)
+
+tbl1 <- kableExtra::kbl(x = vif_df, align = "lc", booktabs = TRUE) |>
+  kableExtra::kable_classic(full_width = FALSE, html_font = "Cambria") |>
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "condensed"),
+    position = "center", fixed_thead = TRUE
+  ) |>
+  kableExtra::row_spec(row = 0, bold = TRUE, extra_css = "border-bottom: 2px solid") |>
+  kableExtra::row_spec(row = nrow(vif_df), extra_css = "border-bottom: 2px solid;") |>
+  kableExtra::column_spec(column = 1, bold = TRUE, border_right = "0.5px solid black")
+
+tbl2 <- kableExtra::kbl(x = cor_df, align = "lccc", booktabs = TRUE) |>
+  kableExtra::kable_classic(full_width = FALSE, html_font = "Cambria") |>
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "condensed"),
+    position = "center", fixed_thead = TRUE
+  ) |>
+  kableExtra::row_spec(row = 0, bold = TRUE, extra_css = "border-bottom: 2px solid") |>
+  kableExtra::row_spec(row = nrow(cor_df), extra_css = "border-bottom: 2px solid;") |>
+  kableExtra::column_spec(column = 1, bold = TRUE, border_right = "0.5px solid black") |>
+  kableExtra::column_spec(column = 2, border_right = "0.5px dashed gray") |>
+  kableExtra::column_spec(column = 3, border_right = "0.5px dashed gray")
+
+htmltools::HTML(sprintf(
+  '<div style="text-align: center;"><p><b>Table 4: Correlation Matrix and VIFs</b></p>%s%s</div>',
+  tbl1, tbl2
+))
+```
+
+The VIFs are very high, suggesting the model assumption of the absence of multicollinearity does not hold.
+
+---
+
+## 6.2 Linear Discriminant Analysis (LDA)
+
+We log-transform the predictors before training the LDA model to make the data more homoscedastic (i.e., to stabilize the variances, bringing them closer to equal) because LDA assumes that the class-conditional distributions have equal variances.
+
+$$
+LD = Red(\log(x_1)) + Blue(\log(x_2)) + Green(\log(x_3)) \tag{Equation 11}
+$$
+
+### 6.2.1 Training and Parameter/Hyperparameter Optimization
 
 ```{r lda}
-fit_lda <- train_timed(Tarp ~ log(Red) + log(Blue) + log(Green), data, "lda",
-                       ctrl, preProcess = c("center", "scale"))
+fit_lda <- train_timed(
+  formula    = Tarp ~ log(Red) + log(Blue) + log(Green),
+  data       = data,
+  method     = "lda",
+  ctrl       = ctrl,
+  preProcess = c("center", "scale")
+)
 results$LDA <- fit_lda
-
-thresh_lda <- compute_thresholds(fit_lda$model)
-plot_threshold_grid(thresh_lda, "LDA")
-plot_roc_curves(fit_lda$model, data,
-                title = "ROC Curves (LDA)",
-                xlim = c(0, 0.15), ylim = c(0.85, 1))
 ```
 
-## 4.3 QDA
+```{r lda-cv-results}
+lda_cv <- data.frame(
+  ROC         = round(x = fit_lda$model$results$ROC, digits = 4) * 100,
+  Sensitivity = round(x = fit_lda$model$results$Sens, digits = 4) * 100,
+  Specificity = round(x = fit_lda$model$results$Spec, digits = 4) * 100
+)
+
+styled_kable(df = lda_cv, caption = "<b>Table 5: LDA CV Results</b>", bold_col1 = FALSE)
+```
+
+### 6.2.2 Threshold Analysis and ROC Curve
+
+```{r lda-thresh, fig.height=3.5}
+thresh_lda <- compute_thresholds(model = fit_lda$model)
+plot_threshold_grid(thresh_data = thresh_lda, model_name = "LDA")
+```
+
+Comparing the summary statistics for the LDA model at various thresholds, the best overall performance appears to occur at a threshold of 0.9. The FPR is lowest and Balanced Accuracy is highest at this threshold. Kappa and the F1 score do not vary much.
+
+```{r lda-roc}
+plot_roc_curves(
+  model = fit_lda$model, data = data,
+  title = "ROC Curves (LDA)",
+  xlim  = c(0, 0.15), ylim = c(0.85, 1)
+)
+```
+
+The ROC curves and AUC values for the LDA model show that it is highly accurate and far better than random guessing. The ROC curve for the OOF sample is only slightly different than the fold curves, so the model seems not to over-fit the training data.
+
+### 6.2.3 Final Model
+
+```{r lda-final-model}
+lda_fm     <- fit_lda$model$finalModel
+lda_priors <- round(x = lda_fm$prior * 100, digits = 2)
+lda_means  <- round(x = lda_fm$means, digits = 3)
+lda_ld     <- round(x = lda_fm$scaling[, 1], digits = 3)
+
+lda_ldcoefs <- data.frame(
+  Predictor = names(lda_ld),
+  LD1       = as.numeric(lda_ld)
+)
+
+styled_kable(df = lda_ldcoefs, caption = "<b>Table 6a: LDA Linear Discriminant Coefficients</b>")
+
+lda_finmd <- data.frame(
+  "Tarp Status" = rownames(lda_means),
+  "Prior Probs" = as.numeric(lda_priors),
+  lda_means,
+  check.names = FALSE
+)
+
+styled_kable(df = lda_finmd, caption = "<b>Table 6b: LDA Prior Probabilities and Group Means</b>")
+```
+
+The equation for the final LDA model is included below, where $LD$ represents the linear discriminant and the coefficients represent the weights assigned to each predictor. $x_1$, $x_2$, and $x_3$ denote **`Red`**, **`Blue`**, and **`Green`**, respectively:
+
+$$
+LD1 = - 4.5271(x_1) + 5.5658(x_2) - 0.7768(x_3) \tag{Equation 4.2}
+$$
+
+In the context of this analysis, the first linear discriminant function ($LD1$) is a linear combination of the estimated coefficients of the linear discriminants for each log-transformed predictor.
+
+### 6.2.4 Assumptions and Limitations
+
+The LDA model assumes that each class has a Gaussian distribution with the same covariance.
+
+---
+
+## 6.3 Quadratic Discriminant Analysis (QDA)
+
+### 6.3.1 Training and Parameter/Hyperparameter Optimization
 
 ```{r qda}
-fit_qda <- train_timed(Tarp ~ Red + Blue + Green, data, "qda", ctrl)
+fit_qda <- train_timed(
+  formula = Tarp ~ Red + Blue + Green,
+  data    = data,
+  method  = "qda",
+  ctrl    = ctrl
+)
 results$QDA <- fit_qda
-
-thresh_qda <- compute_thresholds(fit_qda$model)
-plot_threshold_grid(thresh_qda, "QDA")
-plot_roc_curves(fit_qda$model, data,
-                title = "ROC Curves (QDA)",
-                xlim = c(0, 0.15), ylim = c(0.85, 1))
 ```
 
-## 4.4 KNN
+```{r qda-cv-results}
+qda_cv <- data.frame(
+  ROC         = round(x = fit_qda$model$results$ROC, digits = 4) * 100,
+  Sensitivity = round(x = fit_qda$model$results$Sens, digits = 4) * 100,
+  Specificity = round(x = fit_qda$model$results$Spec, digits = 4) * 100
+)
+
+styled_kable(df = qda_cv, caption = "<b>Table 7: QDA CV Results</b>", bold_col1 = FALSE)
+```
+
+### 6.3.2 Threshold Analysis and ROC Curve
+
+```{r qda-thresh, fig.height=3.5}
+thresh_qda <- compute_thresholds(model = fit_qda$model)
+plot_threshold_grid(thresh_data = thresh_qda, model_name = "QDA")
+```
+
+Comparing the summary statistics for the QDA model at various thresholds, the best overall performance appears to occur at a threshold of 0.8; the FPR is second-lowest and Balanced Accuracy is second-highest at this threshold, while Kappa and F1 remain high.
+
+```{r qda-roc}
+plot_roc_curves(
+  model = fit_qda$model, data = data,
+  title = "ROC Curves (QDA)",
+  xlim  = c(0, 0.15), ylim = c(0.85, 1)
+)
+```
+
+The ROC curves and AUC values for the QDA model show that it is highly accurate and far better than random guessing. The ROC curve for the OOF sample is quite different than the fold curves, so the model may be over-fit on the training data, which could indicate poor performance on the holdout set.
+
+### 6.3.3 Final Model
+
+```{r qda-final-model}
+qda_fm     <- fit_qda$model$finalModel
+qda_priors <- round(x = qda_fm$prior * 100, digits = 2)
+qda_means  <- round(x = qda_fm$means, digits = 2)
+
+qda_finmd <- data.frame(
+  "Tarp Status" = rownames(qda_means),
+  "Prior Probs" = as.numeric(qda_priors),
+  qda_means,
+  check.names = FALSE
+)
+
+styled_kable(df = qda_finmd, caption = "<b>Table 8: QDA finalModel</b>")
+```
+
+The prior probabilities of the groups reflect the class imbalance we already know from the exploratory data analysis. What is informative, however, are the group means: for observations that the model classifies as belonging to a blue tarp, the mean **`Blue`** value is much higher than the observations the model classified as not belonging to a blue tarp. On the other hand, the mean value for **`Red`** barely changes from class to class, and the mean for **`Green`** changes only slightly.
+
+### 6.3.4 Assumptions and Limitations
+
+The QDA model assumes that each class has a Gaussian distribution but potentially different covariances.
+
+---
+
+## 6.4 K-Nearest Neighbors (KNN)
+
+We fit a KNN model and customize the tuning process by adding the *tuneLength* parameter to the *train* function and passing an integer ($10$) to it, which tells the *train* function to try $10$ different values for $k$.
+
+The KNN model estimates the conditional probability for class $j$ as the fraction of points in $\mathscr{N}_0$ whose response values equal $j$ and then classifies $x_0$ to the class with the largest probability from:[^17]
+
+[^17]: Ibid, James, G. et al. (pp. 39).
+
+$$
+Pr(Y = j | X = x_0) = \frac{1}{K} \sum_{i \in \mathscr{N}_0} I(y_i = j) \tag{Equation 13}
+$$
+
+where $x_0$ represents the test observation to be classified and $\mathscr{N}_0$ represents the $K$ points in the training data that are closest to $x_0$.
+
+### 6.4.1 Training and Parameter/Hyperparameter Optimization
 
 ```{r knn}
-fit_knn <- train_timed(Tarp ~ Red + Blue + Green, data, "knn", ctrl,
-                       tuneLength = 10)
+fit_knn <- train_timed(
+  formula    = Tarp ~ Red + Blue + Green,
+  data       = data,
+  method     = "knn",
+  ctrl       = ctrl,
+  tuneLength = 10
+)
 results$KNN <- fit_knn
+```
 
-# Plot AUC vs. K
+```{r knn-auc-plot, fig.height=2, fig.width=5}
 knn_k_df <- data.frame(
   K   = fit_knn$model$results$k,
-  AUC = round(fit_knn$model$results$ROC, 5) * 100
+  AUC = round(x = fit_knn$model$results$ROC, digits = 5) * 100
 )
-ggplot(knn_k_df, aes(K, AUC)) +
-  geom_line(color = "#232D4B", linewidth = 0.5) +
-  geom_point(color = "#E57200", size = 1.5) +
-  labs(title = "AUC by K", x = "K", y = "AUC (CV)") +
-  scale_x_continuous(breaks = knn_k_df$K) +
-  theme_linedraw() +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5),
-        axis.title = element_text(face = "bold"))
 
-thresh_knn <- compute_thresholds(fit_knn$model)
-plot_threshold_grid(thresh_knn, "KNN",
-                    subtitle = paste0("k = ", fit_knn$model$bestTune$k))
-plot_roc_curves(fit_knn$model, data,
-                title = "ROC Curves (KNN)",
-                note  = paste0("k = ", fit_knn$model$bestTune$k),
-                xlim = c(0, 0.007), ylim = c(0, 1))
+ggplot2::ggplot(data = knn_k_df, mapping = ggplot2::aes(x = K, y = AUC)) +
+  ggplot2::geom_line(color = "#232D4B", linewidth = 0.5) +
+  ggplot2::geom_point(color = "#E57200", size = 1.5) +
+  ggplot2::labs(title = "AUC by K", x = "K", y = "AUC (CV)") +
+  ggplot2::scale_x_continuous(breaks = knn_k_df$K) +
+  ggplot2::theme_linedraw() +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+    axis.title = ggplot2::element_text(face = "bold")
+  )
+
+best_k <- fit_knn$model$bestTune$k
 ```
 
-## 4.5 Penalized Logistic Regression (Elastic Net)
+### 6.4.2 Threshold Analysis and ROC Curve
+
+```{r knn-thresh, fig.height=3.5}
+thresh_knn <- compute_thresholds(model = fit_knn$model)
+plot_threshold_grid(thresh_data = thresh_knn, model_name = "KNN", subtitle = paste0("k = ", best_k))
+```
+
+Comparing the summary statistics for the KNN model where $k=$ `r best_k` at various thresholds, the best overall performance appears to occur at a threshold of 0.6. This threshold strikes a tough balance between FPR and the other summary statistics. The FPR is still quite low at a threshold of 0.6 (compared to other models) and this is the threshold at which Kappa and F1 are the highest.
+
+```{r knn-roc}
+plot_roc_curves(
+  model = fit_knn$model, data = data,
+  title = "ROC Curves (KNN)",
+  note  = paste0("k = ", best_k),
+  xlim  = c(0, 0.007), ylim = c(0, 1)
+)
+```
+
+The ROC curves and AUC values for the KNN model show that it is highly accurate and far better than random guessing. The ROC curve for the OOF sample is quite different than the fold curves, so the model may be over-fit on the training data, which could indicate poor performance on the holdout set.
+
+### 6.4.3 Final Model
+
+```{r knn-final-model}
+knn_finmd <- data.frame(
+  "Tarp Status" = c("No", "Yes"),
+  Outcome = format(x = table(data$Tarp), big.mark  = ","),
+  check.names = FALSE
+)
+
+styled_kable(df = knn_finmd, caption = paste0("<b>Table 9: KNN finalModel</b>")) |>
+  kableExtra::add_footnote(label = paste0("k = ", best_k), notation = "none")
+```
+
+### 6.4.4 Assumptions and Limitations
+
+The KNN model is a non-parametric statistical learning approach with few underlying assumptions and flexible decision boundaries. The KNN model has some limitations; for example, it treats all instances equally regardless of class, and the dataset for this project is highly imbalanced, so the majority class may dominate the classification and create misleading and/or biased results. Another limitation is that KNN is sensitive to the scale of the parameters; KNN calculates the distance between instances by parameter values, though the predictors in this case are within the same range (0 to 255).
+
+---
+
+## 6.5 Penalized Logistic Regression (Elastic Net)
+
+The Elastic Net penalty combines the ridge regression penalty and the lasso regression penalty; it combines L1 and L2 regularization to achieve feature selection and regularization.
+
+We must define two hyperparameters ($\alpha$ and $\lambda$) given that we defined the method parameter for the *train* function as "glmnet." $\alpha$ can be a value between $0$ and $1$; when $\alpha=0$, the lasso penalty is $0$, and only the ridge regression penalty remains. Rather than pass sequences of $\lambda$ and $\alpha$ values to the *expand.grid* function, we set *tuneLength* to $20$ and let the caret package choose the optimal hyperparameters.
+
+### 6.5.1 Training and Parameter/Hyperparameter Optimization
 
 ```{r plr}
-fit_plr <- train_timed(Tarp ~ Red + Blue + Green, data, "glmnet", ctrl,
-                       tuneLength = 20, allowParallel = TRUE)
+fit_plr <- train_timed(
+  formula       = Tarp ~ Red + Blue + Green,
+  data          = data,
+  method        = "glmnet",
+  ctrl          = ctrl,
+  tuneLength    = 20,
+  family        = "binomial",
+  allowParallel = TRUE
+)
 results$PLR <- fit_plr
 
-best_alpha  <- round(fit_plr$model$bestTune$alpha, 4)
-best_lambda <- signif(fit_plr$model$bestTune$lambda, 2)
+best_alpha  <- round(x = fit_plr$model$bestTune$alpha, digits = 4)
+best_lambda <- signif(x = fit_plr$model$bestTune$lambda, digits = 2)
 plr_note    <- paste0("\u03B1 = ", best_alpha, " | \u03BB = ", best_lambda)
-
-thresh_plr <- compute_thresholds(fit_plr$model)
-plot_threshold_grid(thresh_plr, "PLR", subtitle = plr_note)
-plot_roc_curves(fit_plr$model, data,
-                title = "ROC Curves (PLR)",
-                note  = plr_note,
-                xlim = c(0, 0.4), ylim = c(0.75, 1))
 ```
 
-## 4.6 Random Forest
+```{r plr-besttune}
+plr_bt <- data.frame(
+  Hyperparameter = c("\u03B1", "\u03BB"),
+  Values         = c(best_alpha, best_lambda)
+)
+
+styled_kable(df = plr_bt, caption = "<b>Table 10: PLR bestTune</b>")
+```
+
+### 6.5.2 Threshold Analysis and ROC Curve
+
+```{r plr-thresh, fig.height=3.5}
+thresh_plr <- compute_thresholds(model = fit_plr$model)
+plot_threshold_grid(thresh_data = thresh_plr, model_name = "PLR", subtitle = plr_note)
+```
+
+Comparing the summary statistics for the PLR model (where $\lambda=$ `r best_lambda` and $\alpha=$`r best_alpha`) at various thresholds, the best overall performance appears to occur at a threshold of 0.6. Balanced Accuracy is relatively high and the FPR relatively low at a threshold of 0.6. The drop in Kappa and F1 from 0.6 to 0.9 warrants going with the lower threshold.
+
+```{r plr-roc}
+plot_roc_curves(
+  model = fit_plr$model,
+  data  = data,
+  title = "ROC Curves (PLR)",
+  note  = plr_note,
+  xlim  = c(0, 0.4),
+  ylim  = c(0.75, 1)
+)
+```
+
+The ROC curves and AUC values for the PLR model show that it is highly accurate and far better than random guessing. The ROC curve for the OOF sample is quite different than the fold curves, so the model may be over-fit on the training data, which could indicate poor performance on the holdout set.
+
+### 6.5.3 Assumptions and Limitations
+
+The Elastic Net penalty for logistic regression assumes a linear relationship between the predictor variables and the log odds of the response variable.
+
+---
+
+## 6.6 Random Forest
+
+A weak learner classification decision tree predicts that each observation belongs to the most commonly occurring class of training observations in the region to which it belongs. The problem is, however, these weak learners suffer from high variance as they're prone to produce very different results if trained on different subsets of the training data. We leverage an ensemble learning algorithm (the RF model) to overcome this. RF uses bootstrapping to take repeated samples from the training data, train a model on the $b$th bootstrapped training set to get $\hat{f}^{*b}(x)$ and then average all the predictions to find the ensemble predictor:[^18]
+
+[^18]: Ibid, James, G. et al. (pp. 341).
+
+$$
+\hat{f}_{\text{bag}}(x) = \frac{1}{B} \sum_{b=1}^B \hat{f}^{*b}(x) \tag{Equation 14}
+$$
+
+As we're running a binary classification, the model takes a "majority vote" --- if most of the trees classified a given pixel as belonging to a blue tarp, then the ensemble predictor classifies it as such.
+
+RF decorrelates the trees by using a random subset of $m$ predictors as candidates for each node (or split) and taking a different subset of $m$ predictors for each subsequent node. We define a list of $mtry$ values as either $1$ or $2$, given that we only have $3$ predictors and using $m=p$ amounts to bagging.
+
+### 6.6.1 Training and Parameter/Hyperparameter Optimization
 
 ```{r rf}
 mtry_grid <- expand.grid(mtry = c(1, 2))
-fit_rf <- train_timed(Tarp ~ Red + Green + Blue, data, "rf", ctrl,
-                      tuneGrid = mtry_grid, ntree = 500)
+
+fit_rf <- train_timed(
+  formula  = Tarp ~ Red + Green + Blue,
+  data     = data,
+  method   = "rf",
+  ctrl     = ctrl,
+  tuneGrid = mtry_grid,
+  ntree    = 500
+)
 results$RF <- fit_rf
 
-thresh_rf <- compute_thresholds(fit_rf$model)
-rf_note <- paste0("ntree = 500 | mtry = ", fit_rf$model$bestTune$mtry)
-plot_threshold_grid(thresh_rf, "Random Forest", subtitle = rf_note)
-plot_roc_curves(fit_rf$model, data,
-                title = "ROC Curves (RF)",
-                note  = rf_note,
-                xlim = c(0, 0.01), ylim = c(0, 1))
+best_mtry <- fit_rf$model$bestTune$mtry
+rf_note   <- paste0("ntree = 500 | mtry = ", best_mtry)
 ```
 
-## 4.7 Support Vector Machine (RBF Kernel)
+```{r rf-cv-results}
+rf_cv <- data.frame(
+  mtry        = fit_rf$model$results$mtry,
+  ROC         = round(x = fit_rf$model$results$ROC, digits = 4) * 100,
+  Sensitivity = round(x = fit_rf$model$results$Sens, digits = 4) * 100,
+  Specificity = round(x = fit_rf$model$results$Spec, digits = 4) * 100
+)
+
+styled_kable(df = rf_cv, caption = "<b>Table 11: RF CV Results</b>") |>
+  kableExtra::add_footnote(
+    label = c("ROC was used to select optimal model.", paste0("Optimal hyperparameter value is mtry = ", best_mtry, ".")),
+    notation = "none"
+  )
+```
+
+### 6.6.2 Threshold Analysis and ROC Curve
+
+```{r rf-thresh, fig.height=3.5}
+thresh_rf <- compute_thresholds(model = fit_rf$model)
+plot_threshold_grid(thresh_data = thresh_rf, model_name = "Random Forest", subtitle = rf_note)
+```
+
+Comparing the summary statistics for the RF model (where $mtry=$ `r best_mtry` and $ntree=500$) at various thresholds, we choose a threshold of 0.5. The FPR is very low at a threshold of 0.5 and only decreases slightly thereafter, whereas Kappa and F1 scores are highest at a threshold of 0.5, and the Balanced Accuracy remains very high.
+
+```{r rf-roc}
+plot_roc_curves(
+  model = fit_rf$model,
+  data  = data,
+  title = "ROC Curves (RF)",
+  note  = rf_note,
+  xlim  = c(0, 0.01),
+  ylim  = c(0, 1)
+)
+```
+
+The ROC curves and AUC values for the RF model show that it is highly accurate and far better than random guessing. The ROC curve for the OOF sample is quite different than the fold curves, so the model may be over-fit on the training data, which could indicate poor performance on the holdout set.
+
+### 6.6.3 Final Model
+
+```{r rf-final-model}
+rf_fm  <- fit_rf$model$finalModel
+rf_oob <- round(x = rf_fm$err.rate[nrow(rf_fm$err.rate), "OOB"] * 100, digits = 2)
+
+rf_conf <- as.data.frame(rf_fm$confusion)
+rf_conf_display <- data.frame(
+  Predicted     = rownames(rf_conf),
+  No            = format(x = rf_conf$No, big.mark = ","),
+  Yes           = format(x = rf_conf$Yes, big.mark = ","),
+  "Class Error" = round(x = rf_conf$class.error, digits = 6),
+  check.names   = FALSE
+)
+
+styled_kable(df = rf_conf_display, caption = "<b>Table 12: RF finalModel (OOB Confusion Matrix)</b>") |>
+  kableExtra::add_footnote(
+    label    = c(rf_note, paste0("OOB estimate of error rate: ", rf_oob, "%.")),
+    notation = "none"
+  )
+```
+
+The **`$finalModel`** component of the RF model shows us that only `r best_mtry` variable(s) are considered at each split during tree construction. The OOB estimate of the error rate is very low, only `r rf_oob`%, and the class error is higher for the "Yes" class.
+
+### 6.6.4 Assumptions and Limitations
+
+Because RF involves bootstrapping and the training data is highly imbalanced, there's a decent risk that a bootstrapped sample contains few (if any) observations of the minority class. This can result in a tree that performs poorly on the holdout data.
+
+---
+
+## 6.7 Support Vector Machine (SVM)
+
+SVMs are an extension of support vector classifiers, which are an extension of maximal margin classifiers. Maximal margin classifiers look for a separating hyperplane (subspace) that separates the classes to maximize the distance (e.g., *margin*) between the separation surface and the nearest data points.
+
+The linear support vector classifier can be represented as
+
+$$
+f(x) = \beta_0 + \sum_{i=1}^{n} \alpha_i \langle x, x_i \rangle \tag{Equation 15}
+$$
+
+where $f(x)$ is the decision function, $\beta_0$ is the intercept, $\alpha_i$ denotes each data point's coefficient (observations with non-zero $\alpha_i$s are support vectors that lie on or within the margin), and $\langle x, x_i \rangle$ represents the inner product between input vector $x$ and observation $x_i$.
+
+Since $\alpha_i \neq 0$ only for support vectors, we can rewrite as
+
+$$
+f(x) = \beta_0 + \sum_{i \in S} \alpha_i \langle x, x_i \rangle \tag{Equation 16}
+$$
+
+where $S$ is the collection of support vector indices. This is more computationally efficient as we only consider the support vectors.
+
+The kernel functions used by SVMs replace the inner product with a generalization $K(x_i, x_{i'})$ that quantifies the similarity of two observations. The linear kernel is
+
+$$
+K(x_i, x_{i'}) = \sum_{j=1}^{p} x_{ij} x_{i'j} \tag{Equation 17}
+$$
+
+The radial basis function (RBF) kernel is
+
+$$
+K(x_i, x_{i'}) = \exp\left(-\gamma \sum_{j=1}^{p} (x_{ij} - x_{i'j})^2\right) \tag{Equation 18}
+$$
+
+where $\gamma$ is a positive constant. The RBF kernel finds support vector classifiers in infinite dimensions.
+
+### 6.7.1 Kernel Selection: Linear vs. Radial
+
+The EDA showed us that the class-separating plane is close to, but not exactly, linear. We determine which kernel to use by training two separate preliminary SVMs.
+
+```{r svm-kernel-test, cache=TRUE}
+set.seed(1)
+svm_radial_prelim <- caret::train(
+  form       = Tarp ~ Red + Green + Blue,
+  data       = data,
+  method     = "svmRadial",
+  metric     = "ROC",
+  tuneLength = 10,
+  trControl  = ctrl
+)
+
+svm_linear_grid <- expand.grid(C = c(0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128))
+set.seed(1)
+svm_linear_prelim <- caret::train(
+  form      = Tarp ~ Red + Green + Blue,
+  data      = data,
+  method    = "svmLinear",
+  metric    = "ROC",
+  tuneGrid  = svm_linear_grid,
+  trControl = ctrl
+)
+```
+
+```{r svm-kernel-comparison, fig.height=2.5, fig.width=6}
+plot_svm_kernel_comparison(
+  radial_model = svm_radial_prelim,
+  linear_model = svm_linear_prelim,
+  title        = "AUC - Linear vs. Radial Kernel"
+)
+```
+
+Caret identifies $cost=128$ as the optimal $cost$ value for both kernels. A $cost$ value of $128$ seems high and may result in over-fitting the training data and poor performance on the holdout set. Further, increasing $cost$ from $0.25$ to $128$ only slightly increases AUC. Such a high $cost$ value could produce too many support vectors and too narrow a margin.
+
+For the SVM with radial kernel, caret identifies $\gamma=`r round(svm_radial_prelim$bestTune$sigma, 4)`$ as the optimal $\gamma$ value, which also seems high and could result in an irregular decision boundary over-fit to the training data.
+
+```{r svm-support-vectors-high-cost, cache=TRUE}
+plot_svm_support_vectors(
+  data  = data,
+  cost  = 128,
+  gamma = svm_radial_prelim$bestTune$sigma,
+  title = "Support Vectors (cost=128)"
+)
+```
+
+The support vectors for the SVM with linear kernel are tightly grouped for both classes. The support vectors for the SVM with radial kernel are much more dispersed.
+
+Since performance did not change much as $cost$ changed, we train another set of SVMs with $cost=0.25$ and $\gamma$ as a sequence from $1$ to $3$ in increments of $0.25$.
+
+### 6.7.2 Training and Parameter/Hyperparameter Optimization
 
 ```{r svm}
-svm_grid <- expand.grid(C = 0.25, sigma = seq(1, 3, 0.25))
-fit_svm <- train_timed(Tarp ~ Red + Green + Blue, data, "svmRadial", ctrl,
-                       tuneGrid = svm_grid)
+svm_grid <- expand.grid(
+  C     = 0.25,
+  sigma = seq(from = 1, to = 3, by = 0.25)
+)
+
+fit_svm <- train_timed(
+  formula  = Tarp ~ Red + Green + Blue,
+  data     = data,
+  method   = "svmRadial",
+  ctrl     = ctrl,
+  tuneGrid = svm_grid
+)
 results$SVM <- fit_svm
 
 svm_note <- paste0(
   "C = ", fit_svm$model$bestTune$C,
-  " | \u03B3 = ", round(fit_svm$model$bestTune$sigma, 4)
+  " | \u03B3 = ", round(x = fit_svm$model$bestTune$sigma, digits = 4)
+)
+```
+
+```{r svm-cv-results}
+svm_cv <- data.frame(
+  gamma       = round(x = fit_svm$model$results$sigma, digits = 2),
+  ROC         = round(x = fit_svm$model$results$ROC, digits = 4) * 100,
+  Sensitivity = round(x = fit_svm$model$results$Sens, digits = 4) * 100,
+  Specificity = round(x = fit_svm$model$results$Spec, digits = 4) * 100
+)
+names(svm_cv)[1] <- "\u03B3"
+
+styled_kable(df = svm_cv, caption = "<b>Table 13: SVM Radial CV Results</b>") |>
+  kableExtra::add_footnote(
+    label    = c("cost held constant at 0.25.", "ROC was used to select optimal model."),
+    notation = "none"
+  )
+```
+
+We see that the optimal tuning occurs when $\gamma=$ `r round(fit_svm$model$bestTune$sigma, 4)` while holding $cost$ constant at $0.25$.
+
+```{r svm-support-vectors-tuned, cache=TRUE}
+plot_svm_support_vectors(
+  data  = data,
+  cost  = 0.25,
+  gamma = fit_svm$model$bestTune$sigma,
+  title = "Support Vectors (cost=0.25, tuned)"
+)
+```
+
+The radial support vectors are not as widely dispersed with the lower cost and the linear support vectors appear almost unchanged.
+
+```{r svm-kernel-final-comparison}
+set.seed(1)
+svm_linear_final <- caret::train(
+  form      = Tarp ~ Red + Green + Blue,
+  data      = data,
+  method    = "svmLinear",
+  metric    = "ROC",
+  tuneGrid  = expand.grid(C = 0.25),
+  trControl = ctrl
 )
 
-thresh_svm <- compute_thresholds(fit_svm$model)
-plot_threshold_grid(thresh_svm, "SVM (RBF)", subtitle = svm_note)
-plot_roc_curves(fit_svm$model, data,
-                title = "ROC Curves (SVM)",
-                note  = svm_note,
-                xlim = c(0, 0.01), ylim = c(0, 1))
+svm_comp <- data.frame(
+  Statistics = c("ROC", "Sensitivity", "Specificity"),
+  Radial     = c(
+    round(x = fit_svm$model$results$ROC[fit_svm$model$results$sigma == fit_svm$model$bestTune$sigma], digits = 4) * 100,
+    round(x = fit_svm$model$results$Sens[fit_svm$model$results$sigma == fit_svm$model$bestTune$sigma], digits = 4) * 100,
+    round(x = fit_svm$model$results$Spec[fit_svm$model$results$sigma == fit_svm$model$bestTune$sigma], digits = 4) * 100
+  ),
+  Linear     = c(
+    round(x = svm_linear_final$results$ROC, digits = 4) * 100,
+    round(x = svm_linear_final$results$Sens, digits = 4) * 100,
+    round(x = svm_linear_final$results$Spec, digits = 4) * 100
+  )
+)
+
+styled_kable(df = svm_comp, caption = "<b>Table 14: SVM Results, Radial vs. Linear Kernel</b>") |>
+  kableExtra::add_footnote(
+    label    = c("cost = 0.25.", paste0("\u03B3 = ", round(fit_svm$model$bestTune$sigma, 4), ".")),
+    notation = "none"
+  )
 ```
 
-# 5. Model Comparison
+Because the class separation is not quite linear and the radial kernel performs better, we move forward using the SVM with radial kernel.
+
+### 6.7.3 Threshold Analysis and ROC Curve
+
+```{r svm-thresh, fig.height=3.5}
+thresh_svm <- compute_thresholds(model = fit_svm$model)
+plot_threshold_grid(thresh_data = thresh_svm, model_name = "SVM (RBF)", subtitle = svm_note)
+```
+
+Comparing the summary statistics for the SVM with radial kernel, we believe the optimal threshold is 0.9, as this is where the FPR is lowest and the Balanced Accuracy is highest; the Kappa value and F1 score are second-highest at 0.9 and only slightly less than when the threshold is 0.8.
+
+```{r svm-roc}
+plot_roc_curves(
+  model = fit_svm$model,
+  data  = data,
+  title = "ROC Curves (SVM)",
+  note  = svm_note,
+  xlim  = c(0, 0.01),
+  ylim  = c(0, 1)
+)
+```
+
+The ROC curves and AUC values for the SVM show that it is highly accurate and far better than random guessing. The ROC curve for the OOF sample is quite different (albeit better) than the fold curves, so the model may be over-fit on the training data, which could indicate poor performance on the holdout set.
+
+### 6.7.4 Assumptions and Limitations
+
+SVMs tend to be one of the most accurate classifiers and work well with classes with nonlinear separation, and the classes in the training data for this project don't appear to be separated by a perfect linear plane; however, SVM can take a long time to train. SVMs can also be prone to over-fitting training data; for example, the caret package first recommended $cost=128$, but that seemed too high, so we adjusted accordingly.
+
+---
+
+# 7. Model Comparison
 
 ```{r comparison-table}
-comparison <- purrr::imap_dfr(results, function(res, name) {
-  best_row <- res$model$results
-  if (nrow(best_row) > 1) {
-    # Pick the row matching bestTune
-    best_idx <- as.numeric(rownames(res$model$bestTune))
-    if (!is.na(best_idx) && best_idx <= nrow(best_row)) {
-      best_row <- best_row[best_idx, ]
-    } else {
-      best_row <- best_row[which.max(best_row$ROC), ]
+comparison <- do.call(what = rbind, args = Map(
+  f = function(res, name) {
+    best_row <- res$model$results
+    if (nrow(best_row) > 1) {
+      best_idx <- as.numeric(rownames(res$model$bestTune))
+      if (!is.na(best_idx) && best_idx <= nrow(best_row)) {
+        best_row <- best_row[best_idx, ]
+      } else {
+        best_row <- best_row[which.max(best_row$ROC), ]
+      }
     }
-  }
-  data.frame(
-    Model       = name,
-    AUC         = round(best_row$ROC, 5) * 100,
-    Sensitivity = round(best_row$Sens, 4) * 100,
-    Specificity = round(best_row$Spec, 4) * 100,
-    `Train Time (s)` = round(res$elapsed, 2),
-    check.names = FALSE
-  )
-})
+    data.frame(
+      Model            = name,
+      AUC              = round(x = best_row$ROC, digits = 5) * 100,
+      Sensitivity      = round(x = best_row$Sens, digits = 4) * 100,
+      Specificity      = round(x = best_row$Spec, digits = 4) * 100,
+      "Train Time (s)" = round(x = res$elapsed, digits = 2),
+      check.names      = FALSE
+    )
+  },
+  results, names(results)
+))
 
-styled_kable(comparison, caption = "<b>Table: Cross-Validation Summary</b>")
+rownames(comparison) <- NULL
+
+# Add range row
+range_row <- data.frame(
+  Model            = "Range",
+  AUC              = round(diff(range(comparison$AUC)), 3),
+  Sensitivity      = round(diff(range(comparison$Sensitivity)), 2),
+  Specificity      = round(diff(range(comparison$Specificity)), 2),
+  "Train Time (s)" = round(diff(range(comparison$`Train Time (s)`)), 2),
+  check.names      = FALSE
+)
+
+comparison_with_range <- rbind(comparison, range_row)
+
+styled_kable(df = comparison_with_range, caption = "<b>Table 15: Cross-Validation Summary</b>") |>
+  kableExtra::row_spec(row = nrow(comparison_with_range), extra_css = "border-top: 3px dashed gray;")
 ```
 
-# 6. Holdout Evaluation
+---
+
+# 8. Holdout Evaluation
+
+We evaluate each model on the holdout set using the per-model thresholds selected during cross-validation threshold analysis.
 
 ```{r holdout-eval}
-# Deploy each model on the holdout set, measure prediction time
-holdout_results <- purrr::imap_dfr(results, function(res, name) {
-  start <- proc.time()
-  preds <- predict(res$model, newdata = holdout)
-  elapsed <- (proc.time() - start)["elapsed"]
+thresholds <- c(
+  Logistic = 0.9,
+  LDA      = 0.9,
+  QDA      = 0.8,
+  KNN      = 0.6,
+  PLR      = 0.6,
+  RF       = 0.5,
+  SVM      = 0.9
+)
 
-  cm <- confusionMatrix(preds, holdout$Tarp, positive = "Yes")
+holdout_results <- do.call(what = rbind, args = Map(
+  f = function(res, name) {
+    ho <- evaluate_holdout(model = res$model, holdout = holdout, threshold = thresholds[[name]])
+    ho$Model <- name
+    ho
+  },
+  results, names(results)
+))
 
-  data.frame(
-    Model             = name,
-    `Balanced Accuracy` = round(cm$byClass["Balanced Accuracy"], 4) * 100,
-    Kappa             = round(cm$overall["Kappa"], 4) * 100,
-    F1                = round(cm$byClass["F1"], 4) * 100,
-    FPR               = round(1 - cm$byClass["Specificity"], 4) * 100,
-    `Deploy Time (s)` = round(elapsed, 2),
-    check.names       = FALSE
-  )
-})
+rownames(holdout_results) <- NULL
+holdout_results <- holdout_results[, c("Model", "Threshold", "AUROC", "Balanced Accuracy", "Kappa", "F1", "FPR", "Deploy Time (s)")]
 
-styled_kable(holdout_results, caption = "<b>Table: Holdout Performance</b>")
+# Add range row
+ho_range <- data.frame(
+  Model               = "Range",
+  Threshold           = NA,
+  AUROC               = round(diff(range(holdout_results$AUROC)), 3),
+  "Balanced Accuracy" = round(diff(range(holdout_results$`Balanced Accuracy`)), 2),
+  Kappa               = round(diff(range(holdout_results$Kappa)), 2),
+  F1                  = round(diff(range(holdout_results$F1)), 2),
+  FPR                 = round(diff(range(holdout_results$FPR)), 2),
+  "Deploy Time (s)"   = round(diff(range(holdout_results$`Deploy Time (s)`)), 2),
+  check.names         = FALSE
+)
+
+holdout_with_range <- rbind(holdout_results, ho_range)
+
+styled_kable(df = holdout_with_range, caption = "<b>Table 16: Holdout Performance</b>") |>
+  kableExtra::row_spec(row = nrow(holdout_with_range), extra_css = "border-top: 3px dashed gray;")
 ```
+
+## 8.1 Holdout Confusion Matrices
 
 ```{r holdout-confusion-matrices, fig.height=4, fig.width=10}
-cm_plots <- purrr::imap(results, function(res, name) {
-  preds <- predict(res$model, newdata = holdout)
-  cm    <- confusionMatrix(preds, holdout$Tarp, positive = "Yes")
-  plot_confusion_matrix(cm, name)
-})
+cm_plots <- Map(
+  f = function(res, name) {
+    prob  <- stats::predict(object = res$model, newdata = holdout, type = "prob")
+    pred  <- factor(x = ifelse(prob$Yes > thresholds[[name]], "Yes", "No"), levels = c("No", "Yes"))
+    cm    <- caret::confusionMatrix(data = pred, reference = holdout$Tarp, positive = "Yes")
+    plot_confusion_matrix(conf_matrix = cm, title = name)
+  },
+  results, names(results)
+)
 
-do.call(gridExtra::grid.arrange, c(cm_plots, ncol = 4))
+do.call(what = gridExtra::grid.arrange, args = c(cm_plots, ncol = 4))
 ```
 
-# 7. Conclusions
+## 8.2 Holdout ROC Curves
 
-The **Penalized Logistic Regression** model is recommended for blue tarp detection.
-On the holdout set it achieved the highest AUC, Kappa, and F1 score, the
-second-lowest FPR, and the fastest deployment time. The traditional Logistic
-and LDA models are close contenders — their simplicity and interpretability
-make them strong alternatives when communicating results to non-technical
-stakeholders.
+The plots below show the ROC curves for each model evaluated on the training and holdout data.
 
-Key limitations include the high multicollinearity among RGB predictors
-(VIFs > 200), the severe class imbalance, and the use of a single geographic
-region for training. Future work should explore color space transformations
-(e.g., HSL or CIELUV), over-sampling techniques like SMOTE, and validation
-on imagery from other disaster sites.
+```{r holdout-roc-improved, fig.height=4, fig.width=5, results='asis'}
+for (name in names(results)) {
+  plot_roc_holdout_comparison(
+    model      = results[[name]]$model,
+    holdout    = holdout,
+    train_data = data,
+    title      = paste0("ROC Curves (", name, ")"),
+    note       = if (name == "KNN") paste0("k = ", best_k)
+                 else if (name == "PLR") plr_note
+                 else if (name == "RF") rf_note
+                 else if (name == "SVM") svm_note
+                 else NULL,
+    xlim       = c(0, 0.15),
+    ylim       = c(0.85, 1)
+  )
+}
+```
+
+---
+
+# 9. Conclusions
+
+## 9.1 Best Performing Algorithm
+
+### Cross-Validation
+
+The SVM with an RBF kernel performed best on the training data in the CV. While the RF had the highest AUC, the SVM had the second-highest AUC but lowest FPR and highest Balanced Accuracy. That said, the SVM also had the longest train duration, which is roughly five times the duration of the Logistic, LDA, and QDA models. We were also careful in our hyperparameter tuning for the SVM; the recommended $\gamma$ value may have actually forced the SVM to perform even better in the CV, but we knew this would likely result in poor performance on the holdout set.
+
+### Holdout
+
+The PLR model performed best on the holdout set; it has the second-lowest FPR, the highest AUC, Kappa, and F1 score, and it's the fastest to deploy. The traditional Logistic and LDA models are close contenders. In fact, we believe we could choose either of these three models as performing best on the holdout set, but PLR strikes a reasonable balance between the performance metrics we consider. That being said, interpretability and communicating model performance is incredibly important, so we could just as easily choose the more simple Logistic or LDA models.
+
+## 9.2 Discussing Performance Differences
+
+The optimal model differs for the CV (SVM) and the holdout (PLR). On the surface, this may seem incompatible, but it is reconcilable; the performance metrics for all models don't fluctuate too much between the CV and holdout testing except for the FPR for QDA, KNN, and RF and the test duration for KNN. For QDA, KNN, and RF, we believe the models over-fit the training data. For KNN, it's possible that $k=`r best_k`$ is too high and results in a less flexible, nearly linear decision boundary. It's also possible $k=`r best_k`$ is too low, resulting in a classifier with high variance and an overly flexible decision boundary. For the RF, as mentioned in section 6.6.4, it's possible the bootstrapped samples contain few (if any) observations of the minority class, which may partially explain the difference in performance. The performance differences could also have more to do with differences between the training and holdout data.
+
+## 9.3 Recommended Model
+
+All models perform relatively well on the holdout set, but a few stand out over the others. We recommend the PLR model as the best option for detecting the presence of blue tarps. Tested against the holdout set, the PLR model has the highest AUC, Kappa, and F1 score, the second-highest Balanced Accuracy, the second-lowest FPR, and the fastest test time. The Logistic model is a close second, followed by LDA and SVM. The Logistic and PLR models are similar, but the PLR model may have performed slightly better because of the combination of L1 (Lasso) and L2 (Ridge) penalties encouraging sparse coefficient estimates that *might* then minimize the effects of multicollinearity, whereas the traditional Logistic model may over-fit the training data in the presence of multicollinearity.
+
+## 9.4 Relevance of Performance Metrics
+
+We emphasized the importance of AUC, Balanced Accuracy, Kappa, F1, and FPR throughout this analysis. While training the models and selecting thresholds, we focused a lot of attention on the FPR. This may have resulted in biased threshold selection; that is, selecting the threshold with more weight in our consideration given to FPR may result in the models performing poorly on unseen data. This is part of the reason we chose to also include the other performance metrics, but it made choosing the threshold a bit of a trade-off as the FPR was the only performance metric to fluctuate much between thresholds. Given the degree of class imbalance in both datasets, two of our decisions regarding performance metrics seem appropriate and relevant, those are (1) the use of AUC instead of Accuracy as the metric choice for caret's *train* function and (2) consideration of Balanced Accuracy, Kappa, and F1 scores as the main performance metrics (alongside FPR in the larger project context of disaster relief).
+
+## 9.5 Limitations and Future Directions
+
+The author's lack of subject matter expertise is a significant limitation of the methods used here. In that light, these models could serve as preliminary algorithms for further refining, specifically in terms of which performance metrics to consider in model evaluation and parameter tuning; this could be achieved via collaboration with data scientists and non-data workers from involved government entities and non-governmental organizations, including but not limited to the Red Cross, the United Nations, and other humanitarian aid and disaster relief organizations.
+
+Another limitation in the model development and parameter optimization presented here is that the models are trained on a limited dataset. The models are accurate, but we would be remiss not to advise further model training on new data from different locations. It may even be the case that one model performs better on data from urban areas and another better on data from rural environments.
+
+On the data-level, the RGB color scheme is not the most useful for such important use cases. Given more time, we would have liked to research deeper into feature engineering and transforming the RGB values into alternative color models that can decouple intensity (HSL, for example) and chromaticity (CIELUV, for example).
+
+On the algorithmic-level, various other approaches to adapt the learning algorithms beyond what we leverage in this report may result in improved model performance; for example, perhaps using the Synthetic Minority Over-sampling Technique (SMOTE) with the RF may improve that algorithm's performance.
+
+Each algorithm used in this project also has several underlying assumptions and limitations; we list these in the subsections "Assumptions and Limitations."
+
+## 9.6 Real-World Application
+
+A wealth of subject matter expertise and related contextual information went untapped for this project. The dataset provided does not tell us where the data were captured; for example, if the data is from photographs taken over Port-au-Prince, then running the predictive models may not be all that useful given that many displaced persons in Port-au-Prince were sheltering under tarps provided by the Red Cross, so their location is assumed to be already known.[^22]
+
+[^22]: American Red Cross, "Haiti Earthquake Relief: One-Year Report," (2011), available at <https://www.redcross.org/content/dam/redcross/atg/PDF_s/HaitiEarthquake_OneYearReport.pdf>.
+
+There's much to consider beyond strictly model development in the context of this project. We could find the optimal model for classifying pixel values and identifying blue tarps, but that knowledge is only useful if communicated in such a way that the aid providers on the ground can quickly act on it. It's one thing to say, "There's a blue tarp here," and another to quickly and accurately identify a blue tarp's location, know the terrain features around it, and navigate to it to provide the necessary relief. A vast chasm exists between the model output and the relief practitioners on the ground, but with communication, iteration, and practice, perhaps the next disaster can apply lessons learned and reduce loss of life and suffering for displaced persons.
 
 ```{r cleanup}
-stopCluster(cl)
+parallel::stopCluster(cl = cl)
 ```
 
-# Session Info
+---
+
+# 10. Session Info
 
 ```{r session-info}
-sessionInfo()
+utils::sessionInfo()
 ```
