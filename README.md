@@ -30,7 +30,7 @@ Data-Mining-for-Disaster-Relief/
 ├── scripts/
 │   ├── utils.R           # Reusable helper functions (plotting, tables, evaluation)
 │   └── analysis.Rmd      # Main analysis notebook (knit to produce the report)
-├── Report.pdf            # Final rendered report
+├── renv.lock             # Dependency lockfile for reproducibility
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -63,28 +63,10 @@ The training set (`HaitiPixels.csv`) contains 63,241 pixel observations with col
 
 ### Prerequisites
 
-R ≥ 4.1 (uses the native `|>` pipe) with the following packages:
+R ≥ 4.1 (uses the native `|>` pipe). Restore the exact package environment via [`renv`](https://rstudio.github.io/renv/):
 
 ```r
-# Core
-install.packages(c(
-  "data.table", "ggplot2", "caret", "ROCR",
-  "gridExtra", "kableExtra", "here",
-  "parallel", "doParallel"
-))
-
-# Model-specific (caret dispatches to these)
-install.packages(c(
-  "glmnet", "randomForest", "e1071", "kernlab", "MASS"
-))
-
-# Optional (3D scatter plot in EDA only)
-install.packages("plotly")
-```
-
-Alternatively, restore the environment from the lockfile if using `renv`:
-
-```r
+# install.packages("renv")
 renv::restore()
 ```
 
