@@ -31,6 +31,7 @@ Data-Mining-for-Disaster-Relief/
 │   ├── utils.R           # Reusable helper functions (plotting, tables, evaluation)
 │   └── analysis.Rmd      # Main analysis notebook (knit to produce the report)
 ├── renv.lock             # Dependency lockfile for reproducibility
+├── Makefile              # Entry points: make setup, make report, make clean
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -61,27 +62,21 @@ The training set (`HaitiPixels.csv`) contains 63,241 pixel observations with col
 
 ## How to Reproduce
 
-### Prerequisites
+### Quick Start
 
-R ≥ 4.1 (uses the native `|>` pipe). Restore the exact package environment via [`renv`](https://rstudio.github.io/renv/):
-
-```r
-# install.packages("renv")
-renv::restore()
+```bash
+git clone https://github.com/WD-Scott/Data-Mining-for-Disaster-Relief.git
+cd Data-Mining-for-Disaster-Relief
 ```
 
-### Run the Analysis
+Place the data files in `data/` as described above, then:
 
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/WD-Scott/Data-Mining-for-Disaster-Relief.git
-   cd Data-Mining-for-Disaster-Relief
-   ```
-2. Place the data files in `data/` as described above.
-3. Open and knit `scripts/analysis.Rmd`, or source the helpers and run interactively:
-   ```r
-   source("scripts/utils.R")
-   ```
+```bash
+make setup    # install R dependencies via renv
+make report   # render the analysis to Report.pdf
+```
+
+**Requirements:** R ≥ 4.1 and GNU Make. The `make setup` step restores the exact package versions from `renv.lock`.
 
 ---
 
