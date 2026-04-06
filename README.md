@@ -24,7 +24,7 @@ Classification models trained on satellite imagery to locate displaced persons s
 
 ```
 Data-Mining-for-Disaster-Relief/
-├── data/                 # Place training & holdout data here (see instructions below)
+├── data/
 │   └── .gitkeep
 ├── images/               # Figures and logo used in the README and report
 ├── scripts/
@@ -55,7 +55,7 @@ The SVM performed best during cross-validation but the PLR generalized better to
 
 The training set (`HaitiPixels.csv`) contains 63,241 pixel observations with columns `Class`, `Red`, `Green`, and `Blue`. The holdout set (~2M observations) is provided as multiple `.txt` files.
 
-**To obtain the data:** This dataset was provided through UVA's DS6021 course. Place `HaitiPixels.csv` in `data/` and the holdout `.txt` files in `data/holdout/`.
+**To obtain the data:** This dataset was provided through UVA's DS6021 course. Place `HaitiPixels.csv` and the holdout `.txt` files in `data/`.
 
 ---
 
@@ -63,14 +63,23 @@ The training set (`HaitiPixels.csv`) contains 63,241 pixel observations with col
 
 ### Prerequisites
 
-R ≥ 4.2 with the following packages:
+R ≥ 4.1 (uses the native `|>` pipe) with the following packages:
 
 ```r
+# Core
 install.packages(c(
-  "tidyverse", "caret", "glmnet", "randomForest", "e1071", "kernlab",
-  "MASS", "ROCR", "pROC", "ggpubr", "patchwork", "gridExtra",
-  "kableExtra", "plotly", "tictoc", "doParallel"
+  "data.table", "ggplot2", "caret", "ROCR",
+  "gridExtra", "kableExtra", "here",
+  "parallel", "doParallel"
 ))
+
+# Model-specific (caret dispatches to these)
+install.packages(c(
+  "glmnet", "randomForest", "e1071", "kernlab", "MASS"
+))
+
+# Optional (3D scatter plot in EDA only)
+install.packages("plotly")
 ```
 
 Alternatively, restore the environment from the lockfile if using `renv`:
