@@ -1157,6 +1157,8 @@ plot_roc_holdout_comparison(
   ylim       = c(0.85, 1)
 )
 dev.off()
+
+saveRDS(object = results$PLR$model, file = here::here("models", "plr_model.rds"))
 ```
 
 ---
